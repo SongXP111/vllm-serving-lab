@@ -53,6 +53,10 @@ vllm-serving-lab/
 > 2. **切记不要**在 WSL 内部运行 `sudo apt install nvidia-driver-*`，也不用安装完整 CUDA Toolkit。Windows 驱动会自动映射进 WSL。
 > 3. 项目文件夹请建在 WSL 内部（例如 `~/projects/vllm-serving-lab`），而不是 `/mnt/c`，以保证 IO 性能。
 > 4. Docker Desktop 中必须在 `Settings → Resources → WSL Integration` 勾选您安装的 Ubuntu 发行版。
+> 5. **【关键】针对本地磁盘空间不足的优化**：
+>    - 本项目最低约需 **25-30 GB** 的可用空间（Docker 镜像 ~10GB，模型缓存 ~8GB，WSL 系统 ~5GB）。
+>    - 如果您的 C 盘吃紧，我们可以通过设置环境变量 `HF_HOME` 将模型下载到其他盘，或者在 Docker Desktop 中将虚拟磁盘 (`ext4.vhdx`) 迁移到 D 盘。
+>    - 我们将**只下载**量化版的模型（4-bit AWQ 版通常在 5-6GB，远小于全精度的 16GB）。
 
 ## Open Questions
 
