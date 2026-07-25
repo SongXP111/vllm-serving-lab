@@ -1,6 +1,6 @@
 services:
   vllm:
-    image: vllm/vllm-openai:latest
+    image: vllm/vllm-openai:v0.25.1
     container_name: vllm-server
     ipc: host
     restart: unless-stopped
@@ -14,8 +14,12 @@ services:
     environment:
       # Fix for WSL2 memory pinning issue
       - VLLM_WSL2_ENABLE_PIN_MEMORY=1
+      # Pass HuggingFace token if downloading gated/private models
+      - HF_TOKEN=${HF_TOKEN:-}
+      # API Key environment variable
+      - VLLM_API_KEY=${VLLM_API_KEY:-}
     ports:
-      - "8000:8000"
+      - "${VLLM_PORT:-8000}:8000"
     volumes:
       - ~/.cache/huggingface:/root/.cache/huggingface
       - ./results:/results
@@ -23,48 +27,74 @@ services:
       --model ${VLLM_MODEL:-Qwen/Qwen3-8B-AWQ}
       --served-model-name ${VLLM_SERVED_MODEL:-qwen3-8b-awq}
       --dtype ${VLLM_DTYPE:-auto}
-      --max-model-len 4096
-      --gpu-memory-utilization 0.85
-      --max-num-seqs 8
+      --max-model-len ${MAX_MODEL_LEN:-4096}
+      --gpu-memory-utilization ${GPU_MEMORY_UTILIZATION:-0.85}
+      --max-num-seqs ${MAX_NUM_SEQS:-8}
       ${PREFIX_CACHING_FLAG:---enable-prefix-caching}
       --max-num-batched-tokens ${MAX_BATCHED_TOKENS:-4096}
+      ${VLLM_API_KEY:+--api-key ${VLLM_API_KEY}}
       --generation-config vllm
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "3"
     healthcheck:
-      test: ["CMD-SHELL", "curl -f http://localhost:8000/health || exit 1"]
+      test: ["CMD-SHELL", "curl -s -f http://localhost:8000/health || exit 1"]
       interval: 15s
       timeout: 5s
-      retries: 40        # vLLM model loading can take several minutes
+      retries: 40         # vLLM model loading can take several minutes
       start_period: 120s  # give the model time to load before marking unhealthy
 
   prometheus:
-    image: prom/prometheus:latest
+    image: prom/prometheus:v3.13.1
     container_name: prometheus
     restart: unless-stopped
     ports:
-      - "9090:9090"
+      - "${PROMETHEUS_PORT:-9090}:9090"
     volumes:
       - ./configs/prometheus.yaml:/etc/prometheus/prometheus.yml
       - prometheus_data:/prometheus
     command:
       - '--config.file=/etc/prometheus/prometheus.yml'
       - '--storage.tsdb.retention.time=7d'
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "30m"
+        max-file: "3"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --tries=1 -O - http://localhost:9090/-/healthy || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
     depends_on:
       vllm:
         condition: service_healthy
 
   grafana:
-    image: grafana/grafana:latest
+    image: grafana/grafana:13.1.1
     container_name: grafana
     restart: unless-stopped
     ports:
-      - "3000:3000"
+      - "${GRAFANA_PORT:-3000}:3000"
     environment:
-      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD:-admin}
     volumes:
       - grafana_data:/var/lib/grafana
       - ./configs/grafana/provisioning/datasources:/etc/grafana/provisioning/datasources
       - ./configs/grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards
       - ./dashboards:/var/lib/grafana/dashboards
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "30m"
+        max-file: "3"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --tries=1 -O - http://localhost:3000/api/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
     depends_on:
       - prometheus
 

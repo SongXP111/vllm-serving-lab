@@ -18,8 +18,10 @@ import threading
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 
-BASE_URL_COMPLETIONS = "http://localhost:8000/v1/chat/completions"
-BASE_URL_METRICS = "http://localhost:8000/metrics"
+import os
+PORT = os.environ.get("VLLM_PORT", "8000")
+BASE_URL_COMPLETIONS = os.environ.get("BASE_URL_COMPLETIONS", f"http://localhost:{PORT}/v1/chat/completions")
+BASE_URL_METRICS = os.environ.get("BASE_URL_METRICS", f"http://localhost:{PORT}/metrics")
 RESULT_DIR = "results/quantization"
 
 ROUNDS = 3

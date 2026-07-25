@@ -1,0 +1,26 @@
+# Environment variables & secrets (NEVER commit tokens or keys!)
+.env
+.env.*
+*.env
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+.venv/
+
+# Docker & Monitoring data volumes
+prometheus_data/
+grafana_data/
+*.log
+*.log.*
+
+# IDEs & OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

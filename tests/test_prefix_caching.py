@@ -14,7 +14,9 @@ import statistics
 import uuid
 from datetime import datetime, timezone
 
-BASE_URL = "http://localhost:8000/v1/chat/completions"
+import os
+PORT = os.environ.get("VLLM_PORT", "8000")
+BASE_URL = os.environ.get("BASE_URL", f"http://localhost:{PORT}/v1/chat/completions")
 MODEL = "qwen3-8b-awq"
 RESULT_DIR = "results/prefix-cache"
 

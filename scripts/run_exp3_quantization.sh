@@ -9,6 +9,13 @@ echo "Comparing: Qwen/Qwen3-4B (BF16), Qwen/Qwen3-4B-AWQ, Qwen/Qwen3-8B-AWQ"
 echo "This test restarts the vLLM container for each model and evaluates memory and speed."
 echo "===================================================================="
 
+# ── Resolve project root & load .env for port config ─────
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
+cd "$PROJECT_ROOT"
+if [ -f ".env" ]; then set -a; source .env; set +a; fi
+VLLM_PORT="${VLLM_PORT:-8000}"
+
 # ── Model configurations ──────────────────────────────────
 #   Format: HF_MODEL_ID | SERVED_NAME | LABEL | DTYPE
 CONFIGS=(
@@ -40,7 +47,7 @@ for i in "${!CONFIGS[@]}"; do
 
     echo "⏳ Waiting for vLLM container to become healthy (may download weights on first run)..."
     ATTEMPTS=0
-    until curl -s -f http://localhost:8000/health > /dev/null 2>&1; do
+    until curl -s -f "http://localhost:${VLLM_PORT}/health" > /dev/null 2>&1; do
         ATTEMPTS=$((ATTEMPTS + 1))
         if [ ${ATTEMPTS} -ge ${MAX_WAIT_ATTEMPTS} ]; then
             echo ""

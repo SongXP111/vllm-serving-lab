@@ -3,6 +3,8 @@
 set -e
 
 MODEL_NAME="qwen3-8b-awq"
+# NOTE: BASE_URL is the container-internal address (used by docker exec).
+# Do NOT change this to match VLLM_PORT in .env — inside the container it's always 8000.
 BASE_URL="http://127.0.0.1:8000"
 ENDPOINT="/v1/chat/completions"
 CONCURRENCIES=(1 2 4 8)

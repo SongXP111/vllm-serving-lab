@@ -9,6 +9,13 @@ echo "Testing budgets: 2048, 4096, 8192"
 echo "This test will restart the vLLM container for each budget and run the collision test."
 echo "===================================================================="
 
+# ── Resolve project root & load .env for port config ─────
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
+cd "$PROJECT_ROOT"
+if [ -f ".env" ]; then set -a; source .env; set +a; fi
+VLLM_PORT="${VLLM_PORT:-8000}"
+
 BUDGETS=(2048 4096 8192)
 MAX_WAIT_ATTEMPTS=80   # max health-check attempts (80 × 3s = 240s timeout)
 
@@ -28,7 +35,7 @@ for BUDGET in "${BUDGETS[@]}"; do
 
     echo "⏳ Waiting for vLLM container to become healthy..."
     ATTEMPTS=0
-    until curl -s -f http://localhost:8000/health > /dev/null 2>&1; do
+    until curl -s -f "http://localhost:${VLLM_PORT}/health" > /dev/null 2>&1; do
         ATTEMPTS=$((ATTEMPTS + 1))
         if [ ${ATTEMPTS} -ge ${MAX_WAIT_ATTEMPTS} ]; then
             echo ""
