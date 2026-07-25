@@ -25,7 +25,8 @@ services:
       --max-model-len 4096
       --gpu-memory-utilization 0.85
       --max-num-seqs 8
-      --enable-prefix-caching
+      ${PREFIX_CACHING_FLAG:---enable-prefix-caching}
+      --max-num-batched-tokens ${MAX_BATCHED_TOKENS:-4096}
       --generation-config vllm
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://localhost:8000/health || exit 1"]
