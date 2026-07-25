@@ -78,11 +78,11 @@ vllm-serving-lab/
 
 ### Milestone 3: 启动正式模型 (8B-AWQ)
 停掉小模型，启动正式的 `Qwen/Qwen3-8B-AWQ`。
-- **启动参数重点：** 开启 `--enable-prefix-caching`，使用 `--generation-config vllm` 规避干扰，设置显存使用率 `--gpu-memory-utilization 0.85` 给系统留余地，挂载 `results` 目录等。
+- **启动参数重点：** 加入 `-e VLLM_WSL2_ENABLE_PIN_MEMORY=1` 以修复 WSL 内存映射问题，开启 `--enable-prefix-caching`，使用 `--generation-config vllm` 规避干扰，设置显存使用率 `--gpu-memory-utilization 0.85` 给系统留余地，挂载 `results` 目录等。
 - 编写 API 测试脚本 (`test_api.py`)，验证 4K 上下文、Streaming SSE、中英文及报错恢复。
 
 ### Milestone 4: 接入可观测性 (Prometheus + Grafana)
-- 编写 `compose.yaml` 将 vLLM、Prometheus 和 Grafana 统一编排。
+- 编写 `compose.yaml` 将 vLLM、Prometheus 和 Grafana 统一编排（注意在 environment 中加入 `VLLM_WSL2_ENABLE_PIN_MEMORY: "1"`）。
 - 在 Grafana 中配置 P50/P95/P99 TTFT, TPOT, E2E Latency, Tokens per second, Running/Waiting queue, KV Cache, GPU 利用率面板。
 
 ### Milestone 5: 建立基线压测
