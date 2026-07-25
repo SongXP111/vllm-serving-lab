@@ -1,0 +1,20 @@
+{
+  "experiment": "prefix_caching",
+  "timestamp": "2026-07-25T05:37:26.851784+00:00",
+  "model": "qwen3-8b-awq",
+  "system_prompt_chars": 3908,
+  "prompt_tokens": 2125,
+  "measurement_method": "streaming_ttft",
+  "warm_rounds": 5,
+  "ttft_cold_ms": 555.05,
+  "ttft_warm_each_ms": [
+    26.6,
+    26.89,
+    26.99,
+    26.65,
+    28.17
+  ],
+  "ttft_warm_mean_ms": 27.06,
+  "ttft_warm_std_ms": 0.64,
+  "speedup_factor": 20.51
+}
