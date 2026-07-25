@@ -1,16 +1,28 @@
 {
   "experiment": "chunked_prefill",
-  "timestamp": "2026-07-25T05:39:32.600661+00:00",
+  "timestamp": "2026-07-25T05:49:49.310131+00:00",
   "model": "qwen3-8b-awq",
   "max_num_batched_tokens": 4096,
+  "rounds": 3,
   "decoders_count": 4,
   "prefillers_count": 2,
-  "long_request_ttft_mean_ms": 847.61,
-  "long_request_ttft_p99_ms": 1066.31,
-  "short_request_tpot_mean_ms": 13.6,
-  "short_request_tpot_p95_ms": 11.76,
-  "short_request_tpot_p99_ms": 18.59,
-  "total_tokens_processed": 4947,
-  "total_duration_sec": 4.13,
-  "overall_throughput_tps": 1197.29
+  "tpot_warmup_skip": 5,
+  "long_request_ttft_mean_ms": 820.5,
+  "long_request_ttft_p99_ms": 1000.82,
+  "long_request_ttft_each_ms": [
+    523.78,
+    1002.35,
+    500.81,
+    971.75,
+    961.92,
+    962.41
+  ],
+  "short_request_tpot_mean_ms": 12.66,
+  "short_request_tpot_p95_ms": 10.75,
+  "short_request_tpot_p99_ms": 12.33,
+  "short_request_tpot_samples": 3527,
+  "e2e_latency_p99_ms": 3851.15,
+  "total_gen_tokens": 3660,
+  "total_duration_sec": 11.44,
+  "generation_throughput_tps": 319.94
 }

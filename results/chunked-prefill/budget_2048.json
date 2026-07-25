@@ -1,0 +1,28 @@
+{
+  "experiment": "chunked_prefill",
+  "timestamp": "2026-07-25T05:46:40.047756+00:00",
+  "model": "qwen3-8b-awq",
+  "max_num_batched_tokens": 2048,
+  "rounds": 3,
+  "decoders_count": 4,
+  "prefillers_count": 2,
+  "tpot_warmup_skip": 5,
+  "long_request_ttft_mean_ms": 787.5,
+  "long_request_ttft_p99_ms": 1049.63,
+  "long_request_ttft_each_ms": [
+    587.15,
+    1041.42,
+    536.68,
+    1050.06,
+    540.85,
+    968.84
+  ],
+  "short_request_tpot_mean_ms": 12.79,
+  "short_request_tpot_p95_ms": 10.86,
+  "short_request_tpot_p99_ms": 22.62,
+  "short_request_tpot_samples": 3527,
+  "e2e_latency_p99_ms": 3954.55,
+  "total_gen_tokens": 3660,
+  "total_duration_sec": 11.59,
+  "generation_throughput_tps": 315.67
+}
