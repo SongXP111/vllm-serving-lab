@@ -20,8 +20,9 @@ services:
       - ~/.cache/huggingface:/root/.cache/huggingface
       - ./results:/results
     command: >
-      --model Qwen/Qwen3-8B-AWQ
-      --served-model-name qwen3-8b-awq
+      --model ${VLLM_MODEL:-Qwen/Qwen3-8B-AWQ}
+      --served-model-name ${VLLM_SERVED_MODEL:-qwen3-8b-awq}
+      --dtype ${VLLM_DTYPE:-auto}
       --max-model-len 4096
       --gpu-memory-utilization 0.85
       --max-num-seqs 8
