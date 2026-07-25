@@ -41,7 +41,7 @@ for i in "${!FLAGS[@]}"; do
     echo " ✅ Server is UP and Healthy!"
     
     echo "🚀 [2/3] Running sequential Prefix Caching TTFT test..."
-    python3 scripts/test_prefix_caching.py
+    python3 tests/test_prefix_caching.py
     
     # Move or copy the summary.json to a specific filename for comparison
     cp results/prefix-cache/summary.json "results/prefix-cache/${LABEL}.json"

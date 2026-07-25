@@ -42,7 +42,7 @@ for BUDGET in "${BUDGETS[@]}"; do
     echo " ✅ Server is UP and Healthy!"
 
     echo "🚀 [2/3] Running simultaneous Long Prefill + Ongoing Decode collision test..."
-    python3 scripts/test_chunked_prefill.py --budget ${BUDGET}
+    python3 tests/test_chunked_prefill.py --budget ${BUDGET}
 
     echo "✅ Budget ${BUDGET} completed."
     sleep 2
