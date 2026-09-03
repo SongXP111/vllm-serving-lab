@@ -18,6 +18,7 @@ print_usage() {
     echo "  -6, --exp6         Run Experiment 6: CUDA Graph (CUDA Graph vs Eager Mode)"
     echo "  -7, --exp7         Run Experiment 7: KV Cache Quantization (Auto vs FP8)"
     echo "  -8, --exp8         Run Experiment 8: CPU Offloading & Swap Space"
+    echo "  -9, --exp9         Run Experiment 9: Prefill-Decode Disaggregation (PD Architecture)"
     echo "  -a, --all          Run ALL baseline and experiments sequentially"
     echo "  -h, --help         Show this help message"
     echo "===================================================================="
@@ -37,6 +38,7 @@ RUN_EXP5=false
 RUN_EXP6=false
 RUN_EXP7=false
 RUN_EXP8=false
+RUN_EXP9=false
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -49,6 +51,7 @@ while [[ $# -gt 0 ]]; do
         -6|--exp6)     RUN_EXP6=true; shift ;;
         -7|--exp7)     RUN_EXP7=true; shift ;;
         -8|--exp8)     RUN_EXP8=true; shift ;;
+        -9|--exp9)     RUN_EXP9=true; shift ;;
         -a|--all)
             RUN_BASELINE=true
             RUN_EXP1=true
@@ -59,6 +62,7 @@ while [[ $# -gt 0 ]]; do
             RUN_EXP6=true
             RUN_EXP7=true
             RUN_EXP8=true
+            RUN_EXP9=true
             shift
             ;;
         -h|--help)     print_usage; exit 0 ;;
@@ -122,6 +126,12 @@ if [ "$RUN_EXP8" = true ]; then
     echo ""
     echo "▶️  Executing Experiment 8: CPU Offloading & Swap Space..."
     bash scripts/run_exp8_cpu_offload.sh
+fi
+
+if [ "$RUN_EXP9" = true ]; then
+    echo ""
+    echo "▶️  Executing Experiment 9: Prefill-Decode Disaggregation..."
+    bash scripts/run_exp9_disaggregation.sh
 fi
 
 echo ""
