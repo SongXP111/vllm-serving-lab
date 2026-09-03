@@ -36,6 +36,8 @@ services:
       --scheduling-policy ${SCHEDULING_POLICY:-fcfs}
       ${SPECULATIVE_CONFIG:+--speculative-config ${SPECULATIVE_CONFIG}}
       ${ENFORCE_EAGER_FLAG:-}
+      --swap-space ${SWAP_SPACE_GB:-4}
+      ${CPU_OFFLOAD_GB:+--cpu-offload-gb ${CPU_OFFLOAD_GB}}
       ${VLLM_API_KEY:+--api-key ${VLLM_API_KEY}}
       --generation-config vllm
     logging:

@@ -136,6 +136,11 @@ bash scripts/run_all_benchmarks.sh --all
 - **核心逻辑**：对比标准精度 KV Cache（`--kv-cache-dtype auto`）与 8-bit 量化 KV Cache（`--kv-cache-dtype fp8_e4m3`）在相同显存预算下的物理 Block 分配总量与 Token 容纳上限。
 - **实验结论**：FP8 KV Cache 将单个 Token 的 KV 缓存压缩至 1 Byte，**使系统的并发容纳与长文本 Token 上限直接实现翻倍（~2.0x 扩容）**，且几乎无端到端生成精度损失。
 
+#### 9️⃣ 实验八：CPU 卸载与内存溢出置换 (CPU Offload & Swap Space)
+- **命令**：`bash scripts/run_exp8_cpu_offload.sh` (或 `-8`)
+- **核心逻辑**：测试在突发大并发和极端上下文压迫下，vLLM 的 `--swap-space` 机制如何将超出显存池的 KV Cache 块置换到主机内存（Host RAM），从而防止服务直接触发 CUDA OOM 崩溃。
+- **实验结论**：配置适量的 Swap Space 可充当**系统的“防雪崩安全气囊”**，在保证请求 100% 成功率的同时，以微小的 PCIe 搬运延迟代价换取生产系统的高可用。
+
 > 💡 *所有的压测结果将以规范的 JSON 报告保存于 `results/` 目录下，便于进行深度学术分析或数据绘制。*
 
 ---
