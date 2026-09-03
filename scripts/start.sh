@@ -6,6 +6,7 @@ set -e
 VLLM_PORT="${VLLM_PORT:-8000}"
 PROMETHEUS_PORT="${PROMETHEUS_PORT:-9090}"
 GRAFANA_PORT="${GRAFANA_PORT:-3000}"
+GPU_EXPORTER_PORT="${GPU_EXPORTER_PORT:-9835}"
 
 # Source .env if present (docker compose does this automatically,
 # but we also need the port values for health-check and display)
@@ -24,6 +25,7 @@ fi
 VLLM_PORT="${VLLM_PORT:-8000}"
 PROMETHEUS_PORT="${PROMETHEUS_PORT:-9090}"
 GRAFANA_PORT="${GRAFANA_PORT:-3000}"
+GPU_EXPORTER_PORT="${GPU_EXPORTER_PORT:-9835}"
 
 echo "===================================================================="
 echo "          vLLM Serving Lab - One-Click Start"
@@ -35,7 +37,7 @@ if [ ! -f ".env" ] && [ -f ".env.example" ]; then
     echo "   (To customize tokens or API keys, run: cp .env.example .env)"
 fi
 
-echo "🚀 Starting vLLM, Prometheus, and Grafana containers in background..."
+echo "🚀 Starting vLLM, Prometheus, Grafana, and GPU Exporter containers in background..."
 docker compose up -d
 
 echo ""
@@ -60,6 +62,7 @@ echo "===================================================================="
 echo "🌐 Endpoints Available:"
 echo "   - vLLM API Server : http://localhost:${VLLM_PORT}/v1/chat/completions"
 echo "   - vLLM Metrics    : http://localhost:${VLLM_PORT}/metrics"
+echo "   - GPU Metrics     : http://localhost:${GPU_EXPORTER_PORT}/metrics"
 echo "   - Prometheus      : http://localhost:${PROMETHEUS_PORT}"
 echo "   - Grafana         : http://localhost:${GRAFANA_PORT} (default: admin/admin)"
 echo "===================================================================="
