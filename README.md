@@ -23,10 +23,11 @@
    - 杜绝把 API Key 或 Hugging Face Token 硬编码提交进 Git 代码库。
    - 支持动态环境变量插值（端口、显存利用率、上下文长度、量化 Dtype 等均可灵活定制）。
 3. 📈 **全链路指标监控与可视化 (Observability)**：
-   - 自动预置 Prometheus 数据源与 Grafana 仪表盘。
-   - 实时观测 **TTFT（首字延迟）、TPOT（逐字间隔）、GPU VRAM / KV Cache 命中率、吞吐量 (Tokens/s) 与请求排队时间**。
-4. 🧪 **三大深度优化实验套件**：
-   - 提供完备的 automated 脚本，深度测评 **Prefix Caching（前缀缓存）、Chunked Prefill（分块预填充）与 AWQ 量化 (Quantization)** 核心技术落地收益。
+   - 自动预置 Prometheus 数据源与包含 **16 个监控面板的 Grafana 工业级仪表盘**。
+   - 包含通过 `nvidia_gpu_exporter` 实时采集的 **真实 GPU 核心算力利用率 (SM Compute %)、功率 (Watts)、显卡温度**。
+   - 实时观测 **TTFT（首字延迟）、TPOT（逐字间隔）、端到端延迟 P50/P99、Queue Time 排队延迟、KV Cache 使用率、Prefix Cache 命中率与 Tokens/s 吞吐**。
+4. 🧪 **九大核心推理架构优化实验套件 (9-Experiment Matrix)**：
+   - 提供完备的自动化脚本，深度测评 **Prefix Caching（前缀缓存）、Chunked Prefill（分块预填充）、模型权重量化 (BF16/AWQ/FP8)、FCFS vs Priority 调度策略、Speculative Decoding（投机解码）、CUDA Graph 图执行优化、KV Cache FP8 量化、CPU 卸载与 Swap Space 内存溢出置换、Prefill-Decode Disaggregation (PD 分离架构)**。
 
 ---
 
@@ -77,29 +78,45 @@ bash scripts/smoke_test.sh
 | 服务名称 | 默认地址 | 默认账号 / 密码 | 说明 |
 | :--- | :--- | :--- | :--- |
 | **vLLM API Server** | `http://localhost:8000/v1/chat/completions` | `Bearer <VLLM_API_KEY>` | 兼容 OpenAI /v1 格式接口 |
-| **vLLM Metrics** | `http://localhost:8000/metrics` | 无 | Prometheus 原始打点数据 |
+| **vLLM Metrics** | `http://localhost:8000/metrics` | 无 | vLLM 内部 Prometheus 原始打点 |
+| **GPU Exporter** | `http://localhost:9835/metrics` | 无 | NVIDIA 驱动层硬件算力/功耗打点 |
 | **Prometheus UI** | `http://localhost:9090` | 无 | 抓取、存储与查询时序指标 |
-| **Grafana Dashboard**| `http://localhost:3000` | `admin` / `admin` (可通过 .env 修改) | 核心业务监控大屏 |
+| **Grafana Dashboard**| `http://localhost:3000` | `admin` / `admin` (可通过 .env 修改) | 16 面板全景监控大屏 |
 
 ---
 
 ## 📊 一键压测与实验套件 (Benchmark & Experiments)
 
-我们提供了一个统一的**自动化测试矩阵控制台** `scripts/run_all_benchmarks.sh`，不仅支持基线吞吐压测，还内置了三大核心大模型推理优化实验：
+我们提供了一个统一的**自动化测试矩阵控制台** `scripts/run_all_benchmarks.sh`，不仅支持基线吞吐与泊松流量压测，还内置了九大核心大模型推理优化实验：
 
 ```bash
 # 查看帮助与选项
 bash scripts/run_all_benchmarks.sh --help
 
-# 一键按顺序自动化运行所有基线压测与三大优化实验！
+# 一键按顺序自动化运行所有基线压测与九大优化实验！
 bash scripts/run_all_benchmarks.sh --all
 ```
 
 ### 🧪 实验矩阵明细
 
+| 实验编号 | 优化技术方向 | 核心开关 / 参数 | 对应测试脚本 | 预期性能收益 |
+| :--- | :--- | :--- | :--- | :--- |
+| **Baseline** | **基线压测** | 泊松到达 / 饱和打流 | `scripts/benchmark.sh` | 建立系统吞吐与尾延迟基准 SLA 报告 |
+| **Exp 1** | **Prefix Caching** | `--enable-prefix-caching` | `scripts/run_exp1_prefix_caching.sh` | Radix Tree 跨轮复用，热启动 TTFT 缩短最高 20x |
+| **Exp 2** | **Chunked Prefill** | `--max-num-batched-tokens` | `scripts/run_exp2_chunked_prefill.sh` | 分块混合调度平抑 TPOT 抖动，兼顾长短并发 |
+| **Exp 3** | **权重量化对比** | BF16 vs AWQ vs FP8 | `scripts/run_exp3_quantization.sh` | 压缩模型权重释放显存，可用 KV Blocks 翻倍 |
+| **Exp 4** | **调度策略** | FCFS vs Priority | `scripts/run_exp4_scheduling_policy.sh` | 消除队头阻塞，VIP 请求 TTFT 缩短数十倍 |
+| **Exp 5** | **投机解码 (Spec-Decode)**| `--speculative-config` | `scripts/run_exp5_speculative_decoding.sh` | N-gram 零显存投机，TPOT 缩短 30%~50% (1.5x+ 吞吐) |
+| **Exp 6** | **CUDA Graph 优化** | `--enforce-eager` 开关 | `scripts/run_exp6_cuda_graph.sh` | 消除 CPU 驱动发射开销，小并发解码加速 30%+ |
+| **Exp 7** | **KV Cache FP8 量化** | `--kv-cache-dtype fp8_e4m3` | `scripts/run_exp7_kv_cache_quant.sh` | KV 显存减半，系统并发容纳上限翻倍 (2.0x) |
+| **Exp 8** | **CPU Offload & Swap** | `--swap-space 4` | `scripts/run_exp8_cpu_offload.sh` | 显存过载换出至 Host RAM，请求 100% 防雪崩 |
+| **Exp 9** | **PD 分离架构** | `compose.disaggregated.yaml` | `scripts/run_exp9_disaggregation.sh` | Prefill 与 Decode 物理隔离，解码抖动降低 60%+ |
+
+---
+
 #### 1️⃣ 基线负载压测 (Baseline Workloads)
 - **命令**：`bash scripts/benchmark.sh` (或 `-b`)
-- **场景**：对比在不同并发度（Concurrencies = 1, 2, 4, 8）下，常规对话 (Short Chat)、长文预载 (Long Prefill) 与重度解码 (Decode Heavy) 的 QPS 与延时表现。
+- **场景**：对比在不同并发度（Concurrencies = 1, 2, 4, 8）下，常规对话 (Short Chat)、长文预载 (Long Prefill) 与重度解码 (Decode Heavy) 的 QPS 与延时表现。并在压测结束后自动执行 `parse_benchmark_results.py` 汇总结算完整 SLA 报告。
 
 #### 2️⃣ 实验一：前缀缓存优化 (Prefix Caching)
 - **命令**：`bash scripts/run_exp1_prefix_caching.sh` (或 `-1`)
