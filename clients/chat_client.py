@@ -35,7 +35,7 @@ load_env_file()
 
 PORT = os.environ.get("VLLM_PORT", "8000")
 API_KEY = os.environ.get("VLLM_API_KEY", "")
-DEFAULT_MODEL = os.environ.get("VLLM_SERVED_MODEL", "qwen3-8b-awq")
+DEFAULT_MODEL = os.environ.get("VLLM_SERVED_MODEL", "qwen2.5-7b-instruct-fp8")
 BASE_URL = f"http://localhost:{PORT}/v1/chat/completions"
 
 def stream_chat_completion(model_name, messages, system_prompt=None):

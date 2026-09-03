@@ -17,7 +17,7 @@ from datetime import datetime, timezone
 import os
 PORT = os.environ.get("VLLM_PORT", "8000")
 BASE_URL = os.environ.get("BASE_URL", f"http://localhost:{PORT}/v1/chat/completions")
-MODEL = "qwen3-8b-awq"
+MODEL = os.environ.get("VLLM_SERVED_MODEL", "qwen2.5-7b-instruct-fp8")
 RESULT_DIR = "results/prefix-cache"
 
 WARM_ROUNDS = 5  # number of warm-cache requests for statistical significance

@@ -5,7 +5,7 @@ set -e
 echo "===================================================================="
 echo "    vLLM Serving Lab - Experiment 3: Quantization Comparison Suite"
 echo "===================================================================="
-echo "Comparing: Qwen/Qwen3-4B (BF16), Qwen/Qwen3-4B-AWQ, Qwen/Qwen3-8B-AWQ"
+echo "Comparing: Qwen/Qwen2.5-3B-Instruct (BF16), Qwen/Qwen2.5-7B-Instruct-AWQ (4-bit), RedHatAI/Qwen2.5-7B-Instruct-FP8-dynamic (FP8)"
 echo "This test restarts the vLLM container for each model and evaluates memory and speed."
 echo "===================================================================="
 
@@ -19,9 +19,9 @@ VLLM_PORT="${VLLM_PORT:-8000}"
 # ── Model configurations ──────────────────────────────────
 #   Format: HF_MODEL_ID | SERVED_NAME | LABEL | DTYPE
 CONFIGS=(
-    "Qwen/Qwen3-4B|qwen3-4b|4B-BF16|bfloat16"
-    "Qwen/Qwen3-4B-AWQ|qwen3-4b-awq|4B-AWQ|auto"
-    "Qwen/Qwen3-8B-AWQ|qwen3-8b-awq|8B-AWQ|auto"
+    "Qwen/Qwen2.5-3B-Instruct|qwen2.5-3b-instruct|3B-BF16|bfloat16"
+    "Qwen/Qwen2.5-7B-Instruct-AWQ|qwen2.5-7b-instruct-awq|7B-AWQ|auto"
+    "RedHatAI/Qwen2.5-7B-Instruct-FP8-dynamic|qwen2.5-7b-instruct-fp8|7B-FP8|auto"
 )
 
 MAX_WAIT_ATTEMPTS=120   # max health-check attempts (120 × 3s = 360s timeout for HF downloads)

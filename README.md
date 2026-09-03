@@ -111,10 +111,10 @@ bash scripts/run_all_benchmarks.sh --all
 - **核心逻辑**：通过自动化脚本测试 `max-num-batched-tokens` 在 `2048`, `4096`, `8192` 预算下，大并发流式解码 (Decode) 与突发长文预载 (Prefill) 发生碰撞时的性能制衡。
 - **实验结论**：较小预算有助于降低持续生成流中的卡顿顿挫感（改善短请求 TPOT P99），较大预算则更加照顾吞吐与长文响应速度（降低长请求 TTFT）。
 
-#### 4️⃣ 实验三：模型量化性能与显存对比 (AWQ vs BF16)
+#### 4️⃣ 实验三：模型量化性能与显存对比 (BF16 vs AWQ vs FP8)
 - **命令**：`bash scripts/run_exp3_quantization.sh` (或 `-3`)
-- **核心逻辑**：全自动动态重启容器，横向对比 `Qwen/Qwen3-4B (BF16)`, `Qwen/Qwen3-4B-AWQ`, `Qwen/Qwen3-8B-AWQ` 的显存占用、可用 KV Cache Token 槽位总量、速度及回答质量。
-- **实验结论**：**AWQ 量化的首要价值在于解决显存容量瓶颈**——大幅压缩权重显存从而释放几万乃至几十万的 KV Cache 容量；但在计算延时上，由于解量化算子开销，并不保证在所有硬件和 Batch Size 下都绝对快于 BF16。
+- **核心逻辑**：全自动动态重启容器，横向对比 `Qwen/Qwen2.5-3B-Instruct (BF16)`, `Qwen/Qwen2.5-7B-Instruct-AWQ (4-bit)`, `RedHatAI/Qwen2.5-7B-Instruct-FP8-dynamic (FP8)` 的显存占用、可用 KV Cache Token 槽位总量、速度及回答质量。
+- **实验结论**：**量化的首要价值在于释放显存瓶颈**——大幅压缩权重显存从而释放成倍的 KV Cache 容量，并借助 Blackwell/Ada 架构的 FP8 Tensor Core 获得高吞吐收益。
 
 > 💡 *所有的压测结果将以规范的 JSON 报告保存于 `results/` 目录下，便于进行深度学术分析或数据绘制。*
 

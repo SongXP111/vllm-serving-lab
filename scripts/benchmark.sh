@@ -1,8 +1,11 @@
 #!/bin/bash
 # vLLM Serving Lab - Benchmark Script
-set -e
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
+if [ -f "$PROJECT_ROOT/.env" ]; then set -a; source "$PROJECT_ROOT/.env"; set +a; fi
 
-MODEL_NAME="qwen3-8b-awq"
+MODEL_NAME="${VLLM_SERVED_MODEL:-qwen2.5-7b-instruct-fp8}"
+TOKENIZER_NAME="${VLLM_MODEL:-RedHatAI/Qwen2.5-7B-Instruct-FP8-dynamic}"
 # NOTE: BASE_URL is the container-internal address (used by docker exec).
 # Do NOT change this to match VLLM_PORT in .env — inside the container it's always 8000.
 BASE_URL="http://127.0.0.1:8000"
@@ -12,11 +15,12 @@ NUM_PROMPTS=32
 
 echo "=================================================="
 echo "    Running vLLM Serving Lab Benchmarks"
+echo "    Model: ${MODEL_NAME}"
 echo "=================================================="
 
 # 检查服务是否存在
 if ! curl -s -f ${BASE_URL}/v1/models > /dev/null; then
-    echo "❌ 错误: vLLM 服务未就绪，请先执行 docker compose up -d"
+    echo "❌ 错误: vLLM 服务未就绪，请先执行 bash scripts/start.sh 或 docker compose up -d"
     exit 1
 fi
 
@@ -41,7 +45,7 @@ run_test() {
           --base-url ${BASE_URL} \
           --endpoint ${ENDPOINT} \
           --model ${MODEL_NAME} \
-          --tokenizer Qwen/Qwen3-8B-AWQ \
+          --tokenizer ${TOKENIZER_NAME} \
           --dataset-name random \
           --num-prompts ${NUM_PROMPTS} \
           --random-input-len ${input_len} \

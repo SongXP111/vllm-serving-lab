@@ -2,8 +2,11 @@ import urllib.request
 import urllib.error
 import json
 
-BASE_URL = "http://localhost:8000/v1"
-MODEL_NAME = "qwen3-8b-awq"  # fallback; will be overridden by /v1/models if reachable
+import os
+
+PORT = os.environ.get("VLLM_PORT", "8000")
+BASE_URL = os.environ.get("BASE_URL", f"http://localhost:{PORT}/v1")
+MODEL_NAME = os.environ.get("VLLM_SERVED_MODEL", "qwen2.5-7b-instruct-fp8")  # fallback; will be overridden by /v1/models if reachable
 
 # ---------------------------------------------------------------------------
 # Track pass / fail counts so the script exits with a non-zero code on failure

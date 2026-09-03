@@ -24,8 +24,8 @@ services:
       - ~/.cache/huggingface:/root/.cache/huggingface
       - ./results:/results
     command: >
-      --model ${VLLM_MODEL:-Qwen/Qwen3-8B-AWQ}
-      --served-model-name ${VLLM_SERVED_MODEL:-qwen3-8b-awq}
+      --model ${VLLM_MODEL:-RedHatAI/Qwen2.5-7B-Instruct-FP8-dynamic}
+      --served-model-name ${VLLM_SERVED_MODEL:-qwen2.5-7b-instruct-fp8}
       --dtype ${VLLM_DTYPE:-auto}
       --max-model-len ${MAX_MODEL_LEN:-4096}
       --gpu-memory-utilization ${GPU_MEMORY_UTILIZATION:-0.85}
