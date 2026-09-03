@@ -121,6 +121,11 @@ bash scripts/run_all_benchmarks.sh --all
 - **核心逻辑**：对比在离线批处理密集占满队列场景下，高优先级在线 VIP 请求（`priority=0`）与离线批量请求（`priority=10`）在 `fcfs` 与 `priority` 调度策略下的排队延迟与 TTFT。
 - **实验结论**：开启 `priority` 调度策略可有效打破队头阻塞（Head-of-Line Blocking），将高峰期 **VIP 请求 TTFT 缩短数十倍**，且对集群总吞吐几无损耗。
 
+#### 6️⃣ 实验五：投机解码加速对比 (Speculative Decoding)
+- **命令**：`bash scripts/run_exp5_speculative_decoding.sh` (或 `-5`)
+- **核心逻辑**：在代码生成与结构化 JSON 等具有局部复用规律的任务中，对比标准自回归解码与开启 N-gram 投机采样（`num_speculative_tokens=4`）的单字生成间隔（TPOT）与吞吐量。
+- **实验结论**：N-gram 投机解码无需额外分配任何显存即可达成 **1.4x ~ 2.2x 的逐字生成加速**，极大改善流式客户端的交互卡顿感。
+
 > 💡 *所有的压测结果将以规范的 JSON 报告保存于 `results/` 目录下，便于进行深度学术分析或数据绘制。*
 
 ---
