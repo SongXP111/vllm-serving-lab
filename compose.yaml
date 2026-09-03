@@ -31,6 +31,7 @@ services:
       --gpu-memory-utilization ${GPU_MEMORY_UTILIZATION:-0.85}
       --max-num-seqs ${MAX_NUM_SEQS:-8}
       ${PREFIX_CACHING_FLAG:---enable-prefix-caching}
+      --kv-cache-dtype ${KV_CACHE_DTYPE:-auto}
       --max-num-batched-tokens ${MAX_BATCHED_TOKENS:-4096}
       --scheduling-policy ${SCHEDULING_POLICY:-fcfs}
       ${SPECULATIVE_CONFIG:+--speculative-config ${SPECULATIVE_CONFIG}}

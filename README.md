@@ -131,6 +131,11 @@ bash scripts/run_all_benchmarks.sh --all
 - **核心逻辑**：对比开启 CUDA Graph 图执行与禁用 CUDA Graph（`--enforce-eager`）在低并发逐字生成阶段的性能差异，揭示 CPU 驱动层发射开销（Kernel Launch Overhead）对单字延迟的严重制约。
 - **实验结论**：CUDA Graph 能消除数百个连续的小算子驱动层发射延迟，将小并发解码 **TPOT 缩短 30% ~ 50%**；但也会额外消耗约 800MB 静态显存用于图缓冲。
 
+#### 8️⃣ 实验七：KV Cache 量化收益评估 (FP8 KV Cache)
+- **命令**：`bash scripts/run_exp7_kv_cache_quant.sh` (或 `-7`)
+- **核心逻辑**：对比标准精度 KV Cache（`--kv-cache-dtype auto`）与 8-bit 量化 KV Cache（`--kv-cache-dtype fp8_e4m3`）在相同显存预算下的物理 Block 分配总量与 Token 容纳上限。
+- **实验结论**：FP8 KV Cache 将单个 Token 的 KV 缓存压缩至 1 Byte，**使系统的并发容纳与长文本 Token 上限直接实现翻倍（~2.0x 扩容）**，且几乎无端到端生成精度损失。
+
 > 💡 *所有的压测结果将以规范的 JSON 报告保存于 `results/` 目录下，便于进行深度学术分析或数据绘制。*
 
 ---
