@@ -15,6 +15,7 @@ print_usage() {
     echo "  -3, --exp3         Run Experiment 3: Quantization (3B-BF16, 7B-AWQ, 7B-FP8)"
     echo "  -4, --exp4         Run Experiment 4: Scheduling Policy (FCFS vs Priority)"
     echo "  -5, --exp5         Run Experiment 5: Speculative Decoding (Disabled vs N-gram)"
+    echo "  -6, --exp6         Run Experiment 6: CUDA Graph (CUDA Graph vs Eager Mode)"
     echo "  -a, --all          Run ALL baseline and experiments sequentially"
     echo "  -h, --help         Show this help message"
     echo "===================================================================="
@@ -31,6 +32,7 @@ RUN_EXP2=false
 RUN_EXP3=false
 RUN_EXP4=false
 RUN_EXP5=false
+RUN_EXP6=false
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -40,6 +42,7 @@ while [[ $# -gt 0 ]]; do
         -3|--exp3)     RUN_EXP3=true; shift ;;
         -4|--exp4)     RUN_EXP4=true; shift ;;
         -5|--exp5)     RUN_EXP5=true; shift ;;
+        -6|--exp6)     RUN_EXP6=true; shift ;;
         -a|--all)
             RUN_BASELINE=true
             RUN_EXP1=true
@@ -47,6 +50,7 @@ while [[ $# -gt 0 ]]; do
             RUN_EXP3=true
             RUN_EXP4=true
             RUN_EXP5=true
+            RUN_EXP6=true
             shift
             ;;
         -h|--help)     print_usage; exit 0 ;;
@@ -92,6 +96,12 @@ if [ "$RUN_EXP5" = true ]; then
     echo ""
     echo "▶️  Executing Experiment 5: Speculative Decoding (N-gram)..."
     bash scripts/run_exp5_speculative_decoding.sh
+fi
+
+if [ "$RUN_EXP6" = true ]; then
+    echo ""
+    echo "▶️  Executing Experiment 6: CUDA Graph (Enabled vs Eager Mode)..."
+    bash scripts/run_exp6_cuda_graph.sh
 fi
 
 echo ""

@@ -34,6 +34,7 @@ services:
       --max-num-batched-tokens ${MAX_BATCHED_TOKENS:-4096}
       --scheduling-policy ${SCHEDULING_POLICY:-fcfs}
       ${SPECULATIVE_CONFIG:+--speculative-config ${SPECULATIVE_CONFIG}}
+      ${ENFORCE_EAGER_FLAG:-}
       ${VLLM_API_KEY:+--api-key ${VLLM_API_KEY}}
       --generation-config vllm
     logging:

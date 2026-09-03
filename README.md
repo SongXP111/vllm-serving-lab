@@ -126,6 +126,11 @@ bash scripts/run_all_benchmarks.sh --all
 - **核心逻辑**：在代码生成与结构化 JSON 等具有局部复用规律的任务中，对比标准自回归解码与开启 N-gram 投机采样（`num_speculative_tokens=4`）的单字生成间隔（TPOT）与吞吐量。
 - **实验结论**：N-gram 投机解码无需额外分配任何显存即可达成 **1.4x ~ 2.2x 的逐字生成加速**，极大改善流式客户端的交互卡顿感。
 
+#### 7️⃣ 实验六：CUDA Graph 算子捕获与执行对比 (CUDA Graph vs Eager Mode)
+- **命令**：`bash scripts/run_exp6_cuda_graph.sh` (或 `-6`)
+- **核心逻辑**：对比开启 CUDA Graph 图执行与禁用 CUDA Graph（`--enforce-eager`）在低并发逐字生成阶段的性能差异，揭示 CPU 驱动层发射开销（Kernel Launch Overhead）对单字延迟的严重制约。
+- **实验结论**：CUDA Graph 能消除数百个连续的小算子驱动层发射延迟，将小并发解码 **TPOT 缩短 30% ~ 50%**；但也会额外消耗约 800MB 静态显存用于图缓冲。
+
 > 💡 *所有的压测结果将以规范的 JSON 报告保存于 `results/` 目录下，便于进行深度学术分析或数据绘制。*
 
 ---
