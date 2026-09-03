@@ -32,6 +32,7 @@ services:
       --max-num-seqs ${MAX_NUM_SEQS:-8}
       ${PREFIX_CACHING_FLAG:---enable-prefix-caching}
       --max-num-batched-tokens ${MAX_BATCHED_TOKENS:-4096}
+      --scheduling-policy ${SCHEDULING_POLICY:-fcfs}
       ${VLLM_API_KEY:+--api-key ${VLLM_API_KEY}}
       --generation-config vllm
     logging:

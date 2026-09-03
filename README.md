@@ -116,6 +116,11 @@ bash scripts/run_all_benchmarks.sh --all
 - **核心逻辑**：全自动动态重启容器，横向对比 `Qwen/Qwen2.5-3B-Instruct (BF16)`, `Qwen/Qwen2.5-7B-Instruct-AWQ (4-bit)`, `RedHatAI/Qwen2.5-7B-Instruct-FP8-dynamic (FP8)` 的显存占用、可用 KV Cache Token 槽位总量、速度及回答质量。
 - **实验结论**：**量化的首要价值在于释放显存瓶颈**——大幅压缩权重显存从而释放成倍的 KV Cache 容量，并借助 Blackwell/Ada 架构的 FP8 Tensor Core 获得高吞吐收益。
 
+#### 5️⃣ 实验四：调度策略对比 (FCFS 先来先服务 vs Priority 优先级插队)
+- **命令**：`bash scripts/run_exp4_scheduling_policy.sh` (或 `-4`)
+- **核心逻辑**：对比在离线批处理密集占满队列场景下，高优先级在线 VIP 请求（`priority=0`）与离线批量请求（`priority=10`）在 `fcfs` 与 `priority` 调度策略下的排队延迟与 TTFT。
+- **实验结论**：开启 `priority` 调度策略可有效打破队头阻塞（Head-of-Line Blocking），将高峰期 **VIP 请求 TTFT 缩短数十倍**，且对集群总吞吐几无损耗。
+
 > 💡 *所有的压测结果将以规范的 JSON 报告保存于 `results/` 目录下，便于进行深度学术分析或数据绘制。*
 
 ---
