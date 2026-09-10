@@ -97,8 +97,9 @@ bash scripts/run_all_benchmarks.sh --help
 bash scripts/run_all_benchmarks.sh --all
 ```
 
-> 📖 **深入技术分析**：  
-> 深入理解计算与显存带宽受限、指标定义及工程冲突请阅读 👉 **[《大模型推理核心机制：Prefill 与 Decode 性能指标深度分析与实测报告》](file:///c:/Users/16472/OneDrive/Desktop/Documents/GitHub/vllm-serving-lab/docs/prefill_vs_decode_analysis.md)** 👈
+> 📖 **深入技术分析与实测对比**：  
+> 1. 深入理解计算与显存带宽受限、指标定义及工程冲突：👉 **[《大模型推理核心机制：Prefill 与 Decode 性能指标深度分析与实测报告》](file:///c:/Users/16472/OneDrive/Desktop/Documents/GitHub/vllm-serving-lab/docs/prefill_vs_decode_analysis.md)** 👈  
+> 2. 查看各项优化技术真实实测对比数据与选型决策：👉 **[《核心优化技术实验实测对比报告与选型决策树》](file:///c:/Users/16472/OneDrive/Desktop/Documents/GitHub/vllm-serving-lab/docs/optimization_benchmarks_report.md)** 👈
 
 ### 🧪 实验矩阵明细
 
