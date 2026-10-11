@@ -38,6 +38,10 @@ def main():
     parser.add_argument("--dtype", type=str, default="FP8 (Dynamic)", help="Model weight precision")
     parser.add_argument("--request-rate", type=str, default="inf", help="Traffic request arrival rate")
     parser.add_argument("--burstiness", type=str, default="1.0", help="Arrival burstiness factor")
+    parser.add_argument("--gpu-hourly-cost", type=float, default=1.50, help="Estimated GPU cloud cost in USD/hour (for $/1M tokens)")
+    parser.add_argument("--gpu-util-pct", type=float, default=None, help="Average or peak GPU compute utilization %")
+    parser.add_argument("--kv-cache-util-pct", type=float, default=None, help="Peak KV Cache utilization %")
+    parser.add_argument("--peak-memory-mib", type=int, default=None, help="Peak GPU VRAM allocated in MiB")
     args = parser.parse_args()
 
     result_dir = args.result_dir
@@ -85,15 +89,46 @@ def main():
         in_len = data.get("random_input_len") or data.get("input_lens", [0])[0] if data.get("input_lens") else 0
         out_len = data.get("random_output_len") or data.get("output_lens", [0])[0] if data.get("output_lens") else 0
         concurrency = data.get("max_concurrency", 1)
+        max_concurrent_requests = data.get("max_concurrent_requests", concurrency)
         workload = parse_workload_name(in_len, out_len)
 
         # Performance metrics
         output_tps = data.get("output_throughput", 0.0)
         qps = data.get("request_throughput", 0.0)
         p99_ttft = data.get("p99_ttft_ms", 0.0)
-        p99_tpot = data.get("p99_tpot_ms", 0.0)
+        median_ttft = data.get("median_ttft_ms", 0.0)
         mean_ttft = data.get("mean_ttft_ms", 0.0)
+        p99_tpot = data.get("p99_tpot_ms", 0.0)
+        median_tpot = data.get("median_tpot_ms", 0.0)
         mean_tpot = data.get("mean_tpot_ms", 0.0)
+        p99_itl = data.get("p99_itl_ms", 0.0)
+        mean_itl = data.get("mean_itl_ms", 0.0)
+
+        # Calculate End-to-End latency (E2E) from raw individual request traces if present
+        ttfts_sec = data.get("ttfts", [])
+        itls_sec = data.get("itls", [])
+        e2e_ms_list = []
+        if ttfts_sec and itls_sec and len(ttfts_sec) == len(itls_sec):
+            for t, itl_arr in zip(ttfts_sec, itls_sec):
+                # E2E = (TTFT + sum(ITLs)) * 1000
+                total_duration = t + sum(itl_arr)
+                e2e_ms_list.append(total_duration * 1000.0)
+
+        if e2e_ms_list:
+            e2e_ms_list.sort()
+            mean_e2e_ms = sum(e2e_ms_list) / len(e2e_ms_list)
+            p50_idx = int(len(e2e_ms_list) * 0.50)
+            p99_idx = min(int(len(e2e_ms_list) * 0.99), len(e2e_ms_list) - 1)
+            p50_e2e_ms = e2e_ms_list[p50_idx]
+            p99_e2e_ms = e2e_ms_list[p99_idx]
+        else:
+            mean_e2e_ms = (mean_ttft + (out_len * mean_tpot)) if mean_tpot > 0 else 0.0
+            p50_e2e_ms = (median_ttft + (out_len * median_tpot)) if median_tpot > 0 else 0.0
+            p99_e2e_ms = (p99_ttft + (out_len * p99_tpot)) if p99_tpot > 0 else 0.0
+
+        # Cost calculation: $/1M tokens based on hourly GPU cloud cost
+        # cost = ($/hr / (tok/s * 3600)) * 1,000,000
+        cost_per_m_tokens = round((args.gpu_hourly_cost / (output_tps * 3600.0)) * 1_000_000.0, 4) if output_tps > 0 else 0.0
 
         # Reliability metrics
         completed = data.get("completed", 0)
@@ -110,12 +145,21 @@ def main():
             "in_len": in_len,
             "out_len": out_len,
             "concurrency": concurrency,
+            "max_concurrency": max_concurrent_requests,
             "output_tps": round(output_tps, 1),
             "qps": round(qps, 2),
+            "p50_ttft_ms": round(median_ttft, 1),
             "p99_ttft_ms": round(p99_ttft, 1),
-            "p99_tpot_ms": round(p99_tpot, 1),
             "mean_ttft_ms": round(mean_ttft, 1),
+            "p50_tpot_ms": round(median_tpot, 1),
+            "p99_tpot_ms": round(p99_tpot, 1),
             "mean_tpot_ms": round(mean_tpot, 1),
+            "p99_itl_ms": round(p99_itl, 1),
+            "mean_itl_ms": round(mean_itl, 1),
+            "p50_e2e_ms": round(p50_e2e_ms, 1),
+            "p99_e2e_ms": round(p99_e2e_ms, 1),
+            "mean_e2e_ms": round(mean_e2e_ms, 1),
+            "cost_per_million_tokens_usd": cost_per_m_tokens,
             "completed": completed,
             "failed": failed,
             "error_rate_pct": round(error_rate, 2),
@@ -131,35 +175,45 @@ def main():
     overall_status = "PASS" if overall_err_pct == 0.0 else f"FAIL ({overall_err_pct:.1f}%)"
 
     # Print Terminal Table
-    print("\n" + "=" * 94)
-    print("           📊 vLLM Serving Lab - Comprehensive Benchmark SLA Report")
-    print("=" * 94)
+    print("\n" + "=" * 116)
+    print("                 📊 vLLM Serving Lab - Comprehensive Benchmark SLA & Cost Report")
+    print("=" * 116)
     print(f"🖥️  GPU Hardware       : {args.gpu_name} (Driver: {args.driver_version})")
     print(f"🤖 Model & Precision   : {args.model_name} | Dtype: {args.dtype}")
     print(f"📈 Arrival Distribution: {distribution_desc}")
     print(f"🎯 Total Requests Run  : {all_reqs} ({total_completed_all} Completed, {total_failed_all} Failed)")
     print(f"🛡️ Overall Error Rate  : {overall_err_pct:.2f}% [{overall_status}]")
-    print("-" * 94)
-    printf_fmt = "%-14s  %-10s  %-6s  %13s  %11s  %11s  %11s  %8s\n"
+    if args.gpu_util_pct is not None:
+        print(f"⚡ GPU Compute Util   : {args.gpu_util_pct:.1f}%")
+    if args.kv_cache_util_pct is not None:
+        print(f"🧠 Peak KV Cache Util  : {args.kv_cache_util_pct:.1f}%")
+    if args.peak_memory_mib is not None:
+        print(f"💾 Peak Memory VRAM   : {args.peak_memory_mib} MiB")
+    print(f"💵 Hourly GPU Cost Est : ${args.gpu_hourly_cost:.2f}/hr")
+    print("-" * 116)
+    printf_fmt = "%-13s %-9s %-5s %-11s %-7s %-10s %-10s %-11s %-10s %-9s %-7s\n"
     print(printf_fmt % (
-        "Workload", "In/Out Len", "Conc", "Throughput", "P99 TTFT", "P99 TPOT", "Error Rate", "Status"
+        "Workload", "In/Out", "Conc", "Throughput", "QPS", "P99 TTFT", "P99 TPOT", "P99 E2E", "$/1M Tok", "Err Rate", "Status"
     ), end="")
     print(printf_fmt % (
-        "--------------", "----------", "------", "-------------", "-----------", "-----------", "-----------", "--------"
+        "-------------", "---------", "-----", "-----------", "-------", "----------", "----------", "-----------", "----------", "---------", "-------"
     ), end="")
 
     for r in rows:
         in_out_str = f"{r['in_len']}/{r['out_len']}"
         tps_str = f"{r['output_tps']:.1f} tok/s"
+        qps_str = f"{r['qps']:.2f}"
         ttft_str = f"{r['p99_ttft_ms']:.1f} ms"
         tpot_str = f"{r['p99_tpot_ms']:.1f} ms"
-        err_str = f"{r['error_rate_pct']:.1f}% ({r['failed']}/{r['completed'] + r['failed']})"
+        e2e_str = f"{r['p99_e2e_ms']:.0f} ms"
+        cost_str = f"${r['cost_per_million_tokens_usd']:.2f}"
+        err_str = f"{r['error_rate_pct']:.1f}%"
         conc_str = f"c={r['concurrency']}"
         print(printf_fmt % (
-            r['workload'], in_out_str, conc_str, tps_str, ttft_str, tpot_str, err_str, r['status']
+            r['workload'], in_out_str, conc_str, tps_str, qps_str, ttft_str, tpot_str, e2e_str, cost_str, err_str, r['status']
         ), end="")
 
-    print("=" * 94)
+    print("=" * 116)
 
     # Save JSON summary report
     summary_data = {
@@ -167,6 +221,8 @@ def main():
         "hardware": {
             "gpu_name": args.gpu_name,
             "driver_version": args.driver_version,
+            "gpu_util_pct": args.gpu_util_pct,
+            "peak_memory_mib": args.peak_memory_mib,
         },
         "model": {
             "model_name": args.model_name,
@@ -177,12 +233,16 @@ def main():
             "burstiness": args.burstiness,
             "distribution_description": distribution_desc,
         },
+        "cost_model": {
+            "gpu_hourly_cost_usd": args.gpu_hourly_cost,
+        },
         "sla_summary": {
             "total_requests": all_reqs,
             "total_completed": total_completed_all,
             "total_failed": total_failed_all,
             "overall_error_rate_pct": round(overall_err_pct, 2),
             "overall_status": overall_status,
+            "kv_cache_util_pct": args.kv_cache_util_pct,
         },
         "benchmarks": rows,
     }

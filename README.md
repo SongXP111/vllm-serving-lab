@@ -97,10 +97,13 @@ bash scripts/run_all_benchmarks.sh --help
 bash scripts/run_all_benchmarks.sh --all
 ```
 
-> 📖 **深入技术分析、原理博弈与实测对比**：  
-> 1. 深入理解计算与显存带宽受限、指标定义及工程冲突：👉 **[《大模型推理核心机制：Prefill 与 Decode 性能指标深度分析与实测报告》](file:///c:/Users/16472/OneDrive/Desktop/Documents/GitHub/vllm-serving-lab/docs/prefill_vs_decode_analysis.md)** 👈  
-> 2. 查看各项优化技术真实实测对比数据与选型决策：👉 **[《核心优化技术实验实测对比报告与选型决策树》](file:///c:/Users/16472/OneDrive/Desktop/Documents/GitHub/vllm-serving-lab/docs/optimization_benchmarks_report.md)** 👈  
-> 3. 深入理解优化底层物理机制与吞吐量-尾延迟博弈：👉 **[《大模型推理优化底层原理与吞吐量-尾延迟权衡指南》](file:///c:/Users/16472/OneDrive/Desktop/Documents/GitHub/vllm-serving-lab/docs/optimization_principles_and_tradeoffs.md)** 👈
+> 📖 **深入技术分析、原理博弈与闭环方法论**：  
+> 1. 闭环交付与四维权衡：👉 **[《大模型服务工程化优化方法论：闭环交付与四维帕累托权衡》](file:///c:/Users/16472/OneDrive/Desktop/Documents/GitHub/vllm-serving-lab/docs/serving_methodology.md)** 👈  
+> 2. 7层瓶颈诊断与去单一指标误区：👉 **[《大模型推理服务七层瓶颈分析与诊断框架》](file:///c:/Users/16472/OneDrive/Desktop/Documents/GitHub/vllm-serving-lab/docs/bottleneck_analysis_framework.md)** 👈  
+> 3. 微观性能下钻与工具实操：👉 **[《大模型推理深度下钻 Profiling 实战手册 (Nsight Systems / Nsight Compute / PyTorch Profiler)》](file:///c:/Users/16472/OneDrive/Desktop/Documents/GitHub/vllm-serving-lab/docs/profiling_guide.md)** 👈  
+> 4. 深入理解计算与显存带宽受限、指标定义及工程冲突：👉 **[《大模型推理核心机制：Prefill 与 Decode 性能指标深度分析与实测报告》](file:///c:/Users/16472/OneDrive/Desktop/Documents/GitHub/vllm-serving-lab/docs/prefill_vs_decode_analysis.md)** 👈  
+> 5. 查看各项优化技术真实实测对比数据与选型决策：👉 **[《核心优化技术实验实测对比报告与选型决策树》](file:///c:/Users/16472/OneDrive/Desktop/Documents/GitHub/vllm-serving-lab/docs/optimization_benchmarks_report.md)** 👈  
+> 6. 深入理解优化底层物理机制与吞吐量-尾延迟博弈：👉 **[《大模型推理优化底层原理与吞吐量-尾延迟权衡指南》](file:///c:/Users/16472/OneDrive/Desktop/Documents/GitHub/vllm-serving-lab/docs/optimization_principles_and_tradeoffs.md)** 👈
 
 ### 🧪 实验矩阵明细
 
@@ -169,6 +172,43 @@ bash scripts/run_all_benchmarks.sh --all
 - **实验结论**：PD 分离彻底消除了长 Prefill 算力对 Decode 显存带宽调度的资源争抢，将解码抖动降低 **60% 以上**，保障严苛 SLA 场景下的丝滑用户交互体验。
 
 > 💡 *所有的压测结果将以规范的 JSON 报告保存于 `results/` 目录下，便于进行深度学术分析或数据绘制。*
+
+---
+
+## 🔬 闭环工程实战：Profile 下钻与性能回归门禁 (Profile & Regression)
+
+本项目完全践行 **Profile → Bottleneck Analysis → Optimization → Benchmark → Regression** 五步闭环方法论：
+
+### 1. 多级性能画像与 Profiling (Nsight / PyTorch Profiler)
+```bash
+# 宏观服务级耗时三角分诊 (Queue vs Prefill vs Decode)
+bash scripts/profile_service.sh --macro
+
+# 微观算子级 PyTorch Profiler 轨迹导出 (Chrome Tracing / Perfetto)
+bash scripts/profile_service.sh --torch
+
+# Nsight Systems 系统级与驱动发射排查指导 (Kernel Launch / CPU-GPU 同步)
+bash scripts/profile_service.sh --nsys
+
+# Nsight Compute 算子级屋顶模型分析指导 (Roofline Model)
+bash scripts/profile_service.sh --ncu
+```
+
+### 2. 自动化性能回归门禁 (Regression Gatekeeper)
+任何优化策略上线前，自动比对基线 SLA，严防优化某一指标的同时恶化其他核心体验：
+```bash
+# 自动化执行回归测试集并断言
+bash scripts/run_regression_suite.sh
+
+# 手动断言候选结果 vs Golden Baseline
+python3 scripts/check_regression.py \
+  --baseline results/baseline/summary.json \
+  --current results/regression/summary.json \
+  --ttft-tol 15.0 \
+  --tpot-tol 10.0 \
+  --p99-e2e-tol 20.0
+```
+- 严格拦截：TTFT 恶化 > 15%、TPOT 恶化 > 10%、P99 恶化 > 20%、或 OOM Error Rate > 0%！
 
 ---
 
