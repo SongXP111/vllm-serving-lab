@@ -1,9 +1,18 @@
 #!/usr/bin/env python3
 """
-vLLM Serving Lab - Experiment 8: CPU Offloading & Swap Space Benchmark
+vLLM Serving Lab - Experiment 8: Memory Overflow & Offloading Analysis
 
 Evaluates system resilience against KV Cache out-of-memory errors by monitoring
 CPU Swap Space allocation and block swapping behavior during high-pressure workloads.
+
+Architecture Note (vLLM V0 vs V1 Engine Evolution):
+  - vLLM V0: Implements reactive block swapping (--swap-space N GiB). When GPU KV blocks
+    are exhausted, the scheduler preempts running sequences and swaps blocks to Host RAM.
+  - vLLM V1: Explicitly REMOVED reactive preemption swapping! Swapping KV blocks across
+    PCIe caused massive tail-latency spikes (swap thrashing). V1 replaces reactive swapping
+    with efficient recomputation (RECOMPUTE).
+  - Modern KV Offloading: Distinct from reactive swapping, modern offloading refers to proactive,
+    asynchronous tiered storage (e.g. LMCache/Mooncake) that stages cold prefixes to CPU RAM/SSD.
 
 Measures:
   - CPU Cache Usage % and GPU Cache Usage % (from /metrics)

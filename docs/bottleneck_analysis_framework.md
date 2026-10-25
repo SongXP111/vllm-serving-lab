@@ -65,9 +65,11 @@
 
 ### Layer 2: KV Cache 层 (容量墙与分页置换)
 * **典型症状**：随着并发连接增多，新请求触发中断或延迟突刺；Prometheus 报告 `cpu_cache_usage_perc > 0`。
-* **根因分析**：随着上下文膨胀，GPU KV Cache 池耗尽，触发向 Host RAM 的置换（Swap Thrashing），PCIe 频繁搬运。
+* **根因分析**：随着上下文膨胀，GPU KV Cache 池耗尽。
+  - **vLLM V0 旧版机制**：触发向 Host RAM 的响应式抢占换出（Swap Thrashing），产生严重的 PCIe 搬运延迟抖动。
+  - **vLLM V1 现代演进**：**vLLM V1 已彻底移除旧式 GPU↔CPU 响应式抢占换出机制**，转而采用重计算（`RECOMPUTE`）以保证调度器轻量化。而现代 **KV Offloading** 则属于主动分层存储（Tiered Cache，如 LMCache / Mooncake / CPU 前缀主动沉降），其设计是在上下文生命周期中异步把冷 KV Cache 换出到 CPU RAM 或 NVMe SSD 以供跨请求复用，与旧版应急抢占换出不可混为一谈。
 * **验证工具**：Grafana Panel 6 (`Cache Utilization`)、Panel 14 (`GPU & CPU Cache`)。
-* **工程解法**：开启 `--kv-cache-dtype fp8_e4m3`（容量翻倍）；开启 `--enable-prefix-caching` 复用公共前缀；配置 `--swap-space 4` 保底防 OOM。
+* **工程解法**：开启 `--kv-cache-dtype fp8_e4m3`（容量翻倍）；开启 `--enable-prefix-caching` 复用公共前缀；在 V0 引擎中配置 `--swap-space 4` 保底防 OOM，在 V1 引擎中配置主动分层缓存（Tiered Storage）。
 
 ### Layer 3: Memory Traffic 层 (显存带宽与访存瓶颈)
 * **典型症状**：高并发纯生成场景下，Tokens/s 无法随着算力提升线性增长；GPU 功率（Watts）维持中等偏低水平。
@@ -89,7 +91,10 @@
 
 ### Layer 6: Communication 层 (多卡互联与网络分流)
 * **典型症状**：单机多卡或 PD 分离架构下，P99 延迟显著高于单节点基线。
-* **根因分析**：Tensor Parallelism（TP）的 All-Reduce 算子通信受限于 PCIe 或 NVLink；PD 分离架构下 KV Cache 跨实例网络传输阻塞。
+* **根因分析**：
+  - **TP 通信**：Tensor Parallelism（TP）的 All-Reduce 算子通信受限于 PCIe 或 NVLink 带宽。
+  - **真·PD 分离传输开销**：在真正的 Prefill-Decode Disaggregation 架构中，依赖 **KV Connector（如 PyNcclConnector / Mooncake）** 跨节点传输 KV Cache。若节点间缺乏高带宽 RDMA/NVLink，KV 传输时间可能吞噬 Prefill 节省的时间。
+  - **应用层分流代理**：若使用轻量 HTTP 分流网关（如 `clients/disagg_router.py`），则无 KV 跨节点搬运开销，属于请求级长短隔离。
 * **验证工具**：`scripts/run_exp9_disaggregation.sh` 对比 Monolithic vs Disaggregated 的网络代理延迟与 Jitter。
 
 ### Layer 7: Platform / OS 层 (虚拟化、总线与驱动)

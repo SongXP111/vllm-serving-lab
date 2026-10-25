@@ -1,10 +1,14 @@
 #!/usr/bin/env python3
 """
-vLLM Serving Lab - Experiment 9: Prefill-Decode Disaggregation Benchmark
+vLLM Serving Lab - Experiment 9: Workload Partitioning & Disaggregation Benchmark
 
-Measures the isolation benefits of separating Prefill workers from Decode workers.
-Tests interactive decode stability (TPOT jitter) while the system is bombarded by
-bursts of heavy prefill requests.
+Evaluates interactive decode stability (TPOT jitter) when isolating heavy long-prefill
+bursts from interactive short requests using dedicated instances or gateway routing.
+
+Architecture Note:
+  - This benchmark evaluates Application-Layer Workload Partitioning (coarse-grained request routing).
+  - True token-level PD Disaggregation in vLLM transfers KV Cache across Prefill and Decode workers
+    for the SAME request via native KV Connectors (e.g. PyNcclConnector, Mooncake).
 
 Measures:
   - Interactive Decode TPOT Mean, P95, P99 (ms)

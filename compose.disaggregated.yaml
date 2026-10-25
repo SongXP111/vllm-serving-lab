@@ -1,3 +1,18 @@
+# ==============================================================================
+# vLLM Serving Lab - Prefill-Decode Disaggregation Architecture Exploration
+#
+# 📌 架构设计与说明:
+# 1. 应用层工作负载隔离模式 (默认模式):
+#    - vllm-prefill (8100 端口): 专攻大 Batched Tokens 算力密集吞吐 (--max-num-batched-tokens 8192)
+#    - vllm-decode  (8200 端口): 专攻短 Batch 低延迟流式吐字 (--max-num-batched-tokens 512)
+#    - clients/disagg_router.py 作为网关按 Prompt 长度分流，消除单实例资源抢占抖动。
+#
+# 2. 算子级真·PD 分离模式 (vLLM Native KV Transfer via KV Connector):
+#    - 若在多卡/集群环境中启用原生 KV 跨节点搬运，需在 command 中注入 --kv-transfer-config:
+#      * vllm-prefill: --kv-transfer-config '{"kv_connector":"PyNcclConnector","kv_role":"kv_producer","kv_rank":0,"kv_parallel_size":2}'
+#      * vllm-decode:  --kv-transfer-config '{"kv_connector":"PyNcclConnector","kv_role":"kv_consumer","kv_rank":1,"kv_parallel_size":2}'
+# ==============================================================================
+
 services:
   vllm-prefill:
     image: vllm/vllm-openai:v0.25.1

@@ -89,7 +89,7 @@
 
 ## 三、真实压测基准数据全景报告
 
-以下数据源自本项目在 RTX 5080 Laptop (16GB) 运行 `scripts/benchmark.sh` 并经 `parse_benchmark_results.py` 汇总结算的基准报告（[results/baseline/summary.json](file:///c:/Users/16472/OneDrive/Desktop/Documents/GitHub/vllm-serving-lab/results/baseline/summary.json)）：
+以下数据源自本项目在 RTX 5080 Laptop (16GB) 运行 `scripts/benchmark.sh` 并经 `parse_benchmark_results.py` 汇总结算的基准报告（[results/baseline/summary.json](../results/baseline/summary.json)）：
 
 ### 1. 纯解码重负载 (Decode Heavy: 输入 136 / 输出 512)
 > 典型业务画像：代码编写、小说长文本创作、复杂逻辑推导。
@@ -177,10 +177,10 @@
          ┌───────────────────────────────────────┼──────────────────────────────────────┐
          ▼                                       ▼                                      ▼
 ┌─────────────────────────────┐       ┌─────────────────────────────┐        ┌─────────────────────────────┐
-│ 1. Chunked Prefill (实验二) │       │ 2. Prefix Caching (实验一)  │        │ 3. PD Disaggregation(实验九) │
-│ • 将长 Prefill 切割成多块     │       │ • 基于 Radix Tree 跨轮复用   │        │ • 将 Prefill 与 Decode 实例   │
-│ • 与当前 step Decode 混合调度│       │ • 重复前缀计算直接削减至 0   │        │   物理拆分，网关智能路由分流  │
-│ • 消除打字机大幅度停顿      │       │ • TTFT 缩短最高达 20 倍     │        │ • 彻底消除资源争抢，Jitter-60%│
+│ 1. Chunked Prefill (实验二) │       │ 2. Prefix Caching (实验一)  │        │ 3. PD 架构探索 (实验九)      │
+│ • 将长 Prefill 切割成多块     │       │ • 基于 Radix Tree 跨轮复用   │        │ • 工作负载长度分流 (网关隔离) │
+│ • 与当前 step Decode 混合调度│       │ • 重复前缀计算直接削减至 0   │        │ • 算子级真PD需 KV Connector  │
+│ • 消除打字机大幅度停顿      │       │ • TTFT 缩短最高达 20 倍     │        │ • 消除长文本对流式解码干扰  │
 └─────────────────────────────┘       └─────────────────────────────┘        └─────────────────────────────┘
 ```
 
@@ -195,10 +195,12 @@
 - **运行命令**：`bash scripts/run_exp1_prefix_caching.sh`。
 - **业务收益**：对于包含通用 System Prompt、Few-shot 模板或多轮对话的场景，第二次请求命中了显存中的 Radix Tree 节点，**Prefill 计算量瞬间清零，TTFT 从 500ms+ 直接降至 15ms 以内**。
 
-#### ③ Prefill-Decode Disaggregation（PD 分离解耦架构）
+#### ③ Prefill-Decode 解耦探索：应用层工作负载分流 vs 算子级真·PD 分离
 - **核心控制项**：`compose.disaggregated.yaml` + `clients/disagg_router.py`。
 - **运行命令**：`bash scripts/run_exp9_disaggregation.sh`。
-- **架构优势**：Prefill 节点专攻大 Batch 算力吞吐（端口 8100），Decode 节点专攻低延迟流式吞吐（端口 8200）。经实测，在突发大并发长文本洪峰冲击下，**Decode 节点的单字抖动标准差（Jitter Std-dev）下降 60% 以上**。
+- **关键架构区分**：
+  - **应用层工作负载分流（Workload-level SLA Partitioning）**：`clients/disagg_router.py` 依据请求 Prompt 长度做请求级粗粒度引流，长 Prefill 批处理引流至端口 8100 实例，短交互流式引流至端口 8200 实例。两类请求在不同实例上跑完各自完整的生成生命周期，在单机单卡环境下能以较低门槛实现长短请求的抗干扰隔离。
+  - **算子级真·PD 分离（Token-level Disaggregation via KV Connector）**：同一请求先由 Prefill 节点进行 Prompt Attention 计算并产出首个 Token 与 KV Cache，随后通过 vLLM 官方 **KV Connector（如 PyNcclConnector、Mooncake 等）** 将 KV Cache 跨节点传输给 Decode 节点，由 Decode 节点接力执行自回归循环。其生产核心依赖极高带宽的节点互联（如 NVLink 或 RoCE/IB RDMA）。
 
 ---
 

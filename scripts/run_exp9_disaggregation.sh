@@ -3,10 +3,11 @@
 set -e
 
 echo "===================================================================="
-echo "   vLLM Serving Lab - Experiment 9: PD Disaggregation Automated Suite"
+echo "   vLLM Serving Lab - Experiment 9: PD Disaggregation & Routing Suite"
 echo "===================================================================="
-echo "Comparing: Monolithic Architecture vs Disaggregated (Prefill + Decode)"
-echo "Evaluates how splitting Prefill from Decode isolates interactive latency from prefill bursts."
+echo "Comparing: Monolithic Architecture vs Disaggregated Workload Partitioning"
+echo "Evaluates how isolating Prefill workloads from Decode workers eliminates latency jitter."
+echo "Note: Implements Application Workload Partitioning; native token-level PD uses vLLM KV Connector."
 echo "===================================================================="
 
 # ── Resolve project root & load .env for port config ─────
@@ -109,6 +110,7 @@ echo "   📁 Detailed JSON reports: results/disaggregation/"
 echo ""
 echo "   💡 Key Insights:"
 echo "      1. In Monolithic serving, heavy prefills stall running decode batches (TPOT spikes)."
-echo "      2. Disaggregation isolates compute-heavy prefill from bandwidth-bound decode."
-echo "      3. Notice how Disaggregation slashes Decode Jitter (Standard Deviation of TPOT)!"
+echo "      2. Workload Partitioning isolates compute-heavy prefill requests from bandwidth-bound decode requests."
+echo "      3. Notice how isolating instances slashes Decode Jitter (Standard Deviation of TPOT)!"
+echo "      4. [Advanced] True token-level PD Disaggregation requires vLLM native KV Connector (PyNccl/Mooncake) to transfer KV cache for the same request."
 echo "===================================================================="

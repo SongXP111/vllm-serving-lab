@@ -3,10 +3,10 @@
 set -e
 
 echo "===================================================================="
-echo "   vLLM Serving Lab - Experiment 8: CPU Offload & Swap Space Suite"
+echo "   vLLM Serving Lab - Experiment 8: Memory Overflow & Offloading Analysis"
 echo "===================================================================="
-echo "Comparing: Swap Disabled (--swap-space 0) vs Swap Enabled (--swap-space 4)"
-echo "This test restarts the vLLM container for each configuration to verify memory overflow protection."
+echo "Comparing: V0 Swap Disabled (--swap-space 0) vs V0 Swap Enabled (--swap-space 4)"
+echo "Architecture Note: Evaluates legacy V0 reactive block swapping vs V1 Recompute/Tiered Offload design."
 echo "===================================================================="
 
 # ── Resolve project root & load .env for port config ─────
@@ -91,8 +91,10 @@ echo "===================================================================="
 echo "🎉 CPU Offloading & Swap Space comparison suite completed!"
 echo "   📁 Detailed JSON reports: results/cpu-offload/"
 echo ""
-echo "   💡 Key Insights:"
-echo "      1. CPU Swap Space provides a memory safety net during KV Cache bursts."
-echo "      2. Preempted blocks are staged to host RAM instead of aborting the connection."
-echo "      3. When memory pressure subsides, swapped blocks migrate back via PCIe seamlessly."
+echo "   💡 Key Insights (vLLM V0 vs V1 Engine Architecture):"
+echo "      1. In vLLM V0, CPU Swap Space acts as a reactive safety net to prevent CUDA OOM on preemption."
+echo "      2. [Crucial Architecture Insight] vLLM V1 REMOVED this legacy GPU<->CPU reactive block swapping mechanism."
+echo "         PCIe migration overhead caused massive tail-latency spikes (swap thrashing); V1 favors RECOMPUTE."
+echo "      3. Modern 'KV Offloading' refers to proactive Tiered Storage (e.g. LMCache/Mooncake asynchronous cache offloading)"
+echo "         which is an entirely different architectural design from reactive scheduler block swapping."
 echo "===================================================================="

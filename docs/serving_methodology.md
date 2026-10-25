@@ -60,7 +60,7 @@ flowchart LR
 * **Communication 层**：PD 分离架构网络跳数、多卡 TP All-Reduce 延迟。
 * **Platform 层**：WSL2 虚拟化 Pin Memory 缺陷、PCIe Gen3/Gen4 通道带宽限制。
 
-*(详见技术白皮书：[docs/bottleneck_analysis_framework.md](file:///c:/Users/16472/OneDrive/Desktop/Documents/GitHub/vllm-serving-lab/docs/bottleneck_analysis_framework.md))*
+*(详见技术白皮书：[docs/bottleneck_analysis_framework.md](bottleneck_analysis_framework.md))*
 
 ---
 
@@ -98,7 +98,7 @@ flowchart LR
   ```bash
   bash scripts/run_regression_suite.sh
   ```
-* 回归断言器（[scripts/check_regression.py](file:///c:/Users/16472/OneDrive/Desktop/Documents/GitHub/vllm-serving-lab/scripts/check_regression.py)）自动对比候选版本与 Golden Baseline：
+* 回归断言器（[scripts/check_regression.py](../scripts/check_regression.py)）自动对比候选版本与 Golden Baseline：
   * 若目标吞吐提升，但导致 **TTFT P99 恶化超过 15%** $\to$ **REGRESSION FAIL**！
   * 若单字速度加快，但导致 **OOM Rate > 0%** $\to$ **REGRESSION FAIL**！
   * 若显存节省，但导致 **单 Token 综合服务成本变高** $\to$ **REGRESSION FAIL**！
@@ -134,7 +134,7 @@ $$\max_{\boldsymbol{\theta}} \quad \text{Throughput}(\boldsymbol{\theta}) \quad 
 ```
 
 1. **吞吐量 vs 延迟（Throughput vs Latency）**：增大 Batch 尺寸能摊薄显存权重搬运开销，提升总体 Tokens/s，但会导致单个请求排队变长，恶化 TTFT 与 TPOT。
-2. **并发容量 vs 显存溢出（Concurrency vs OOM Risk）**：调高 `gpu_memory_utilization` 允许容纳更多并发序列，但缩小了极端长文请求的瞬时缓存突刺安全边际，必须由 CPU Swap Space 兜底。
+2. **并发容量 vs 显存溢出（Concurrency vs OOM Risk）**：调高 `gpu_memory_utilization` 允许容纳更多并发序列，但缩小了极端长文请求的瞬时缓存突刺安全边际。在 vLLM V0 中依赖 CPU Swap Space 兜底，而 vLLM V1 则转向轻量重计算（Recomputation）与主动分层缓存（Tiered Storage/Offloading）。
 3. **性能 vs 成本（Performance vs Cost）**：全精度 BF16 无量化精度损失，但单 Token 显存与算力成本高达量化方案的 2~3 倍；FP8 动态量化在极小精度扰动下实现了成本减半与吞吐倍增。
 
 ---
@@ -144,7 +144,7 @@ $$\max_{\boldsymbol{\theta}} \quad \text{Throughput}(\boldsymbol{\theta}) \quad 
 | 方法论阶段 | 本项目落地执行工具 / 脚本 | 产出成果与交付物 |
 | :--- | :--- | :--- |
 | **Stage 1: Profile** | • `bash scripts/profile_service.sh --macro`<br>• `bash scripts/profile_service.sh --torch`<br>• `bash scripts/profile_service.sh --nsys` | • 宏观耗时三角分解<br>• Chrome Tracing 轨迹 (`torch_trace.json`)<br>• Nsight 算子时序图谱 |
-| **Stage 2: Bottleneck Analysis** | • [docs/bottleneck_analysis_framework.md](file:///c:/Users/16472/OneDrive/Desktop/Documents/GitHub/vllm-serving-lab/docs/bottleneck_analysis_framework.md)<br>• 16 面板 Grafana 实时看板 | • 七层瓶颈归因定位<br>• 算力受限 vs 显存带宽受限判定 |
-| **Stage 3: Optimization** | • 实验 1 ~ 实验 9 自动化矩阵 (`scripts/run_exp*.sh`)<br>• [compose.yaml](file:///c:/Users/16472/OneDrive/Desktop/Documents/GitHub/vllm-serving-lab/compose.yaml) / [compose.disaggregated.yaml](file:///c:/Users/16472/OneDrive/Desktop/Documents/GitHub/vllm-serving-lab/compose.disaggregated.yaml) | • 9 大核心推理架构优化实测收益<br>• 调度、缓存、量化、算子、拓扑调优 |
-| **Stage 4: Benchmark** | • `bash scripts/benchmark.sh`<br>• `scripts/parse_benchmark_results.py` | • 包含 TTFT、TPOT、E2E、TPS、QPS、成本的标准 SLA 报告<br>• `results/baseline/summary.json` |
+| **Stage 2: Bottleneck Analysis** | • [docs/bottleneck_analysis_framework.md](bottleneck_analysis_framework.md)<br>• 16 面板 Grafana 实时看板 | • 七层瓶颈归因定位<br>• 算力受限 vs 显存带宽受限判定 |
+| **Stage 3: Optimization** | • 实验 1 ~ 实验 9 自动化矩阵 (`scripts/run_exp*.sh`)<br>• [compose.yaml](../compose.yaml) / [compose.disaggregated.yaml](../compose.disaggregated.yaml) | • 9 大核心推理架构优化实测收益<br>• 调度、缓存、量化、算子、拓扑调优 |
+| **Stage 4: Benchmark** | • `bash scripts/benchmark.sh`<br>• `scripts/parse_benchmark_results.py` | • 包含 TTFT、TPOT、E2E、TPS、QPS、成本的标准 SLA 报告<br>• [results/baseline/summary.json](../results/baseline/summary.json) |
 | **Stage 5: Regression** | • `bash scripts/run_regression_suite.sh`<br>• `python3 scripts/check_regression.py` | • 自动化性能回归报告 (`regression_report.json`)<br>• CI/CD 性能守门员 Exit Code (0/1) |

@@ -1,10 +1,21 @@
 #!/usr/bin/env python3
 """
-vLLM Serving Lab - Prefill-Decode Disaggregation Gateway Router
+vLLM Serving Lab - Workload Partitioning Gateway Proxy (应用层长短请求分流网关)
 
-A lightweight, high-performance HTTP proxy that disaggregates LLM traffic:
-  - Long Prefill / Batch requests -> Routed to Prefill Worker (Port 8100)
-  - Interactive / Short Chat requests -> Routed to Decode Worker (Port 8200)
+📌 架构定义与声明 (Architecture Clarification):
+  本项目此网关实现的是【应用层工作负载隔离 / 请求长度分流 (Workload-level SLA Partitioning)】:
+    - 长文本预填充 / 批处理请求 (Prompt > 800 字符) -> 路由至 Prefill 专用实例 (端口 8100)
+    - 在线交互 / 短对话请求 (Prompt <= 800 字符)   -> 路由至 Decode 专用实例 (端口 8200)
+  
+  ⚠️ 区分【应用层长短分流】与【算子级真·PD 分离 (True Prefill-Decode Disaggregation)】:
+    1. 本脚本 (Workload Partitioning):
+       两个实例分别独立处理完整生命周期的请求，通过隔离避免长输入 GEMM 算力抢占打断在线流式打字。
+       适用于单机/边缘快速落地的防干扰架构。
+    2. 真·PD 分离 (True PD Disaggregation via KV Connector):
+       针对【同一个请求】，Prefill 节点完成长 Prompt 的并行 Attention 计算产出首字与 KV Cache，
+       随后通过 vLLM 官方【KV Connector (如 PyNcclConnector / Mooncake / NIXL)】经 RDMA/NVLink
+       将物理 KV Cache 块跨节点传输给 Decode 节点，由 Decode 节点接力执行单字自回归生成。
+       相关原生配置参见: `compose.disaggregated.yaml` 中的 `--kv-transfer-config` 规范注释。
 """
 import http.server
 import socketserver

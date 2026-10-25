@@ -98,27 +98,31 @@ bash scripts/run_all_benchmarks.sh --all
 ```
 
 > 📖 **深入技术分析、原理博弈与闭环方法论**：  
-> 1. 闭环交付与四维权衡：👉 **[《大模型服务工程化优化方法论：闭环交付与四维帕累托权衡》](file:///c:/Users/16472/OneDrive/Desktop/Documents/GitHub/vllm-serving-lab/docs/serving_methodology.md)** 👈  
-> 2. 7层瓶颈诊断与去单一指标误区：👉 **[《大模型推理服务七层瓶颈分析与诊断框架》](file:///c:/Users/16472/OneDrive/Desktop/Documents/GitHub/vllm-serving-lab/docs/bottleneck_analysis_framework.md)** 👈  
-> 3. 微观性能下钻与工具实操：👉 **[《大模型推理深度下钻 Profiling 实战手册 (Nsight Systems / Nsight Compute / PyTorch Profiler)》](file:///c:/Users/16472/OneDrive/Desktop/Documents/GitHub/vllm-serving-lab/docs/profiling_guide.md)** 👈  
-> 4. 深入理解计算与显存带宽受限、指标定义及工程冲突：👉 **[《大模型推理核心机制：Prefill 与 Decode 性能指标深度分析与实测报告》](file:///c:/Users/16472/OneDrive/Desktop/Documents/GitHub/vllm-serving-lab/docs/prefill_vs_decode_analysis.md)** 👈  
-> 5. 查看各项优化技术真实实测对比数据与选型决策：👉 **[《核心优化技术实验实测对比报告与选型决策树》](file:///c:/Users/16472/OneDrive/Desktop/Documents/GitHub/vllm-serving-lab/docs/optimization_benchmarks_report.md)** 👈  
-> 6. 深入理解优化底层物理机制与吞吐量-尾延迟博弈：👉 **[《大模型推理优化底层原理与吞吐量-尾延迟权衡指南》](file:///c:/Users/16472/OneDrive/Desktop/Documents/GitHub/vllm-serving-lab/docs/optimization_principles_and_tradeoffs.md)** 👈
+> 1. 闭环交付与四维权衡：👉 **[《大模型服务工程化优化方法论：闭环交付与四维帕累托权衡》](docs/serving_methodology.md)** 👈  
+> 2. 7层瓶颈诊断与去单一指标误区：👉 **[《大模型推理服务七层瓶颈分析与诊断框架》](docs/bottleneck_analysis_framework.md)** 👈  
+> 3. 微观性能下钻与工具实操：👉 **[《大模型推理深度下钻 Profiling 实战手册 (Nsight Systems / Nsight Compute / PyTorch Profiler)》](docs/profiling_guide.md)** 👈  
+> 4. 深入理解计算与显存带宽受限、指标定义及工程冲突：👉 **[《大模型推理核心机制：Prefill 与 Decode 性能指标深度分析与实测报告》](docs/prefill_vs_decode_analysis.md)** 👈  
+> 5. 查看各项优化技术真实实测对比数据与选型决策：👉 **[《核心优化技术实验实测对比报告与选型决策树》](docs/optimization_benchmarks_report.md)** 👈  
+> 6. 深入理解优化底层物理机制与吞吐量-尾延迟博弈：👉 **[《大模型推理优化底层原理与吞吐量-尾延迟权衡指南》](docs/optimization_principles_and_tradeoffs.md)** 👈
 
 ### 🧪 实验矩阵明细
 
-| 实验编号 | 优化技术方向 | 核心开关 / 参数 | 对应测试脚本 | 预期性能收益 |
-| :--- | :--- | :--- | :--- | :--- |
-| **Baseline** | **基线压测** | 泊松到达 / 饱和打流 | `scripts/benchmark.sh` | 建立系统吞吐与尾延迟基准 SLA 报告 |
-| **Exp 1** | **Prefix Caching** | `--enable-prefix-caching` | `scripts/run_exp1_prefix_caching.sh` | Radix Tree 跨轮复用，热启动 TTFT 缩短最高 20x |
-| **Exp 2** | **Chunked Prefill** | `--max-num-batched-tokens` | `scripts/run_exp2_chunked_prefill.sh` | 分块混合调度平抑 TPOT 抖动，兼顾长短并发 |
-| **Exp 3** | **权重量化对比** | BF16 vs AWQ vs FP8 | `scripts/run_exp3_quantization.sh` | 压缩模型权重释放显存，可用 KV Blocks 翻倍 |
-| **Exp 4** | **调度策略** | FCFS vs Priority | `scripts/run_exp4_scheduling_policy.sh` | 消除队头阻塞，VIP 请求 TTFT 缩短数十倍 |
-| **Exp 5** | **投机解码 (Spec-Decode)**| `--speculative-config` | `scripts/run_exp5_speculative_decoding.sh` | N-gram 零显存投机，TPOT 缩短 30%~50% (1.5x+ 吞吐) |
-| **Exp 6** | **CUDA Graph 优化** | `--enforce-eager` 开关 | `scripts/run_exp6_cuda_graph.sh` | 消除 CPU 驱动发射开销，小并发解码加速 30%+ |
-| **Exp 7** | **KV Cache FP8 量化** | `--kv-cache-dtype fp8_e4m3` | `scripts/run_exp7_kv_cache_quant.sh` | KV 显存减半，系统并发容纳上限翻倍 (2.0x) |
-| **Exp 8** | **CPU Offload & Swap** | `--swap-space 4` | `scripts/run_exp8_cpu_offload.sh` | 显存过载换出至 Host RAM，请求 100% 防雪崩 |
-| **Exp 9** | **PD 分离架构** | `compose.disaggregated.yaml` | `scripts/run_exp9_disaggregation.sh` | Prefill 与 Decode 物理隔离，解码抖动降低 60%+ |
+> 📌 **实验数据交付与透明度声明 (Data Provenance & Status)**：  
+> • 🟢 **【已完成实测与落盘数据 (Verified Benchmarks with Checked-in Data)】**：已完成端到端实测，在 `results/` 目录下保留完整的原始 JSON 打点文件（包括 Baseline、Prefix Caching、Chunked Prefill、AWQ 量化与 PyTorch Profiler 轨迹）。  
+> • 🟡 **【自动化实验套件就绪 / 支持一键复测 (Automated Benchmark Suites Ready to Run)】**：已完成全部自动化评测脚本与测试逻辑（实验 4 ~ 实验 9），用户克隆仓库后执行对应的 `bash scripts/run_exp*.sh` 即可在本地硬件上一键跑出专属实测 JSON。下表中带有 `*` 标注的指标为基于业界典型经验与架构分析的预期收益。
+
+| 实验编号 | 优化技术方向 | 核心开关 / 参数 | 数据交付状态 | 对应测试脚本 | 预期 / 实测性能收益 |
+| :--- | :--- | :--- | :---: | :--- | :--- |
+| **Baseline** | **基线压测** | 泊松到达 / 饱和打流 | 🟢 **已实测落盘** | `scripts/benchmark.sh` | 建立包含 9 组指标与成本的完整基准 SLA 报告 |
+| **Exp 1** | **Prefix Caching** | `--enable-prefix-caching` | 🟢 **已实测落盘** | `scripts/run_exp1_prefix_caching.sh` | Radix Tree 跨轮复用，热启动 TTFT 缩短最高 19.7x |
+| **Exp 2** | **Chunked Prefill** | `--max-num-batched-tokens` | 🟢 **已实测落盘** | `scripts/run_exp2_chunked_prefill.sh` | 分块混合调度平抑 TPOT 抖动，TPOT P95 稳定在 10.8ms |
+| **Exp 3** | **权重量化对比** | BF16 vs AWQ vs FP8 | 🟢 **已实测落盘** | `scripts/run_exp3_quantization.sh` | 4-bit AWQ 释放显存带宽，生成吞吐暴增 2.38x |
+| **Exp 4** | **调度策略** | FCFS vs Priority | 🟡 **套件就绪*** | `scripts/run_exp4_scheduling_policy.sh` | 消除队头阻塞，VIP 请求 TTFT 缩短数十倍 |
+| **Exp 5** | **投机解码 (Spec-Decode)**| `--speculative-config` | 🟡 **套件就绪*** | `scripts/run_exp5_speculative_decoding.sh` | N-gram 零显存投机，结构化生成 TPOT 缩短 35%+ |
+| **Exp 6** | **CUDA Graph 优化** | `--enforce-eager` 开关 | 🟡 **套件就绪*** | `scripts/run_exp6_cuda_graph.sh` | 消除 CPU 驱动发射小算子开销，小并发解码加速 30%+ |
+| **Exp 7** | **KV Cache FP8 量化** | `--kv-cache-dtype fp8_e4m3` | 🟡 **套件就绪*** | `scripts/run_exp7_kv_cache_quant.sh` | KV 显存减半，系统并发容纳与上下文上限翻倍 (~2.0x) |
+| **Exp 8** | **内存置换与卸载分析** | `--swap-space 4` / V1 Offload | 🟡 **套件就绪*** | `scripts/run_exp8_cpu_offload.sh` | V0 响应式 Swap vs V1 重计算与主动分层卸载深度对比 |
+| **Exp 9** | **PD 架构探索** | 分流网关 vs 算子级真·PD | 🟡 **套件就绪*** | `scripts/run_exp9_disaggregation.sh` | 应用层长短分流 vs vLLM 原生 KV Connector 真·PD 分离 |
 
 ---
 
@@ -161,15 +165,19 @@ bash scripts/run_all_benchmarks.sh --all
 - **核心逻辑**：对比标准精度 KV Cache（`--kv-cache-dtype auto`）与 8-bit 量化 KV Cache（`--kv-cache-dtype fp8_e4m3`）在相同显存预算下的物理 Block 分配总量与 Token 容纳上限。
 - **实验结论**：FP8 KV Cache 将单个 Token 的 KV 缓存压缩至 1 Byte，**使系统的并发容纳与长文本 Token 上限直接实现翻倍（~2.0x 扩容）**，且几乎无端到端生成精度损失。
 
-#### 9️⃣ 实验八：CPU 卸载与内存溢出置换 (CPU Offload & Swap Space)
+#### 9️⃣ 实验八：内存置换与分层卸载对比 (vLLM V0 Swap Space vs V1 KV Offloading)
 - **命令**：`bash scripts/run_exp8_cpu_offload.sh` (或 `-8`)
-- **核心逻辑**：测试在突发大并发和极端上下文压迫下，vLLM 的 `--swap-space` 机制如何将超出显存池的 KV Cache 块置换到主机内存（Host RAM），从而防止服务直接触发 CUDA OOM 崩溃。
-- **实验结论**：配置适量的 Swap Space 可充当**系统的“防雪崩安全气囊”**，在保证请求 100% 成功率的同时，以微小的 PCIe 搬运延迟代价换取生产系统的高可用。
+- **核心逻辑与版本演进辨析**：
+  - **vLLM V0 旧版机制**：通过 `--swap-space` 在调度器发生显存打满预占时，将序列物理块反应式换出到 Host RAM（换取防 OOM 兜底，但伴随显著的 PCIe 抖动延迟）。
+  - **vLLM V1 新版演进**：**vLLM V1 核心调度引擎已彻底移除了旧式 GPU↔CPU 反应式抢占换出机制**（改用更轻量的 `RECOMPUTE` 抢占重算）。而现代 LLM 服务所指的 **KV Offloading**，属于分层存储（Tiered Cache，如 LMCache / Mooncake / CPU 前缀主动沉降），其设计是在上下文生命周期中主动、异步地把冷 KV Cache 换出到 CPU RAM 或 NVMe SSD 以供后续跨请求复用，与旧版响应式抢占换出截然不同。
+- **实验目标**：帮助工程师建立正确的引擎架构演进认知，防范混淆旧版 Swap 与现代 KV 分层存储。
 
-#### 🔟 实验九：Prefill-Decode 分离架构评估 (PD Disaggregation)
+#### 🔟 实验九：PD 架构解耦探索 (应用层工作负载分流 vs 算子级真·PD 分离)
 - **命令**：`bash scripts/run_exp9_disaggregation.sh` (或 `-9`)
-- **核心逻辑**：在单体实例与 PD 分离实例（`compose.disaggregated.yaml`）下，模拟并发长文本 Prefill 洪峰冲击，观测在线交互短请求的逐字生成延迟与抖动方差（Jitter Std-dev）。
-- **实验结论**：PD 分离彻底消除了长 Prefill 算力对 Decode 显存带宽调度的资源争抢，将解码抖动降低 **60% 以上**，保障严苛 SLA 场景下的丝滑用户交互体验。
+- **核心逻辑与架构分层剖析**：
+  - **应用层工作负载分流（Workload-level SLA Partitioning）**：当前提供的本地轻量网关 `clients/disagg_router.py` 依据 Prompt 长度做请求级粗粒度引流（长 Prefill 密集型批处理引流至 Prefill 实例，短交互流式引流至 Decode 实例）。两类请求在各自实例上独立跑完生命周期，适合在单机环境低成本实现长短请求抗干扰隔离。
+  - **算子级真·Prefill-Decode Disaggregation (KV Connector)**：真正的 PD 分离针对**同一个请求**，先由 Prefill 节点执行并行注意力计算并产出首字与 KV 缓存，随后通过 vLLM 官方 **KV Connector（如 PyNcclConnector / Mooncake / NIXL via `--kv-transfer-config`）** 将 KV Cache 通过 RDMA/NVLink 跨节点高速搬运至 Decode 节点，Decode 节点接力执行单字自回归生成。
+- **实验收益**：对比单体混部与分流架构下，突发长文洪峰对流式打字造成的 TPOT 抖动方差，降低交互顿挫感达 **60% 以上**。
 
 > 💡 *所有的压测结果将以规范的 JSON 报告保存于 `results/` 目录下，便于进行深度学术分析或数据绘制。*
 
@@ -217,7 +225,7 @@ python3 scripts/check_regression.py \
 在实际部署（特别是消费级 NVIDIA Laptop 显卡搭配 Windows WSL2 环境）中，可能会遇到显存不够、WSL2 Pin Memory 崩溃、找不到模型仓库或环境参数不生效等常见陷阱。
 
 请仔细阅读我们的专版手册：  
-👉 **[《故障排查与最佳实践手册 (Troubleshooting Guide)》](file:///c:/Users/16472/OneDrive/Desktop/Documents/GitHub/vllm-serving-lab/docs/troubleshooting.md)** 👈
+👉 **[《故障排查与最佳实践手册 (Troubleshooting Guide)》](docs/troubleshooting.md)** 👈
 
 常见问题快速导航：
 - [x] **WSL2 Cannot Pin Memory 报错解决**：自带 `VLLM_WSL2_ENABLE_PIN_MEMORY=1` 环境变量。

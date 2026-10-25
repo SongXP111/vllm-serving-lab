@@ -36,6 +36,7 @@ services:
       --scheduling-policy ${SCHEDULING_POLICY:-fcfs}
       ${SPECULATIVE_CONFIG:+--speculative-config ${SPECULATIVE_CONFIG}}
       ${ENFORCE_EAGER_FLAG:-}
+      # CPU swap space for vLLM V0 engine (note: vLLM V1 removed reactive preemption swapping in favor of RECOMPUTE & tiered offload)
       --swap-space ${SWAP_SPACE_GB:-4}
       ${CPU_OFFLOAD_GB:+--cpu-offload-gb ${CPU_OFFLOAD_GB}}
       ${VLLM_API_KEY:+--api-key ${VLLM_API_KEY}}
