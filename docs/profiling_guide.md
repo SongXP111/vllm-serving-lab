@@ -62,24 +62,33 @@
 ## 二、一级下钻：PyTorch Profiler 算子级链路追踪
 
 ### 1. 快速触发与 Chrome Tracing 导出
-本项目提供了即开即用的本地与容器内 PyTorch Profiler 演示脚本：
+本项目提供了即开即用的本地与容器内 PyTorch Profiler 实战脚本：
 ```bash
+# 模式 A: 本地执行真实 Transformer 解码层前向微架构 Profile (Prefill 2048 + Decode 阶段)
 python3 scripts/torch_profiler.py
+
+# 模式 B: 连接运行中的 vLLM 生产服务触发引擎原生 Profiler (/start_profile & /stop_profile)
+python3 scripts/torch_profiler.py --server --base-url http://localhost:8000
 ```
-该脚本自动执行以下操作：
-* 模拟 Transformer 前向传播层（GEMM、Self-Attention、Softmax）。
-* 记录 CPU Time、CUDA Time、Memory Allocation 与调用栈。
-* 自动导出追踪文件：`results/profiles/torch_trace.json`。
-* 打印消耗最大的 Top 10 算子表格：
+该脚本在 RTX 5080 Laptop GPU 上执行完整的 Transformer Decoder Block（RMSNorm、RoPE、4:1 GQA 注意力层带 KV Cache 拼接、SwiGLU MLP）：
+* 分别对 **Prefill 阶段 (2048 tokens)** 与 **Decode 逐字生成阶段 (1 token + 2048 KV Cache)** 划分 Profiler 作用域。
+* 记录 CUDA Kernel Time、CPU Launch Time、Memory Allocation 与调用栈。
+* 自动导出追踪文件：`results/profiles/torch_trace.json` (715 KB)。
+* 打印消耗最大的 Top 算子表格（展示真实 Tensor Core CUTLASS GEMM 与 GEMV 算子）：
 
 ```text
--------------------------------------------------------  ------------  ------------  ------------
-Name                                                     Self CPU %    Self CUDA %   CUDA Total
--------------------------------------------------------  ------------  ------------  ------------
-aten::mm (GEMM Linear Layer)                             12.4%         68.2%         1.42 ms
-aten::_softmax (Attention Softmax)                       4.1%          14.6%         0.31 ms
-aten::bmm (Batched Matrix Multiplication)                6.8%          12.1%         0.25 ms
-...
+-------------------------------------------------------  ------------  ------------  ------------  ------------
+Name                                                     Self CPU %    Self CUDA %   CUDA Total    CUDA Avg
+-------------------------------------------------------  ------------  ------------  ------------  ------------
+LLM_PREFILL_STAGE (2048 tokens)                          3.12%         82.76%        13.555 ms     13.555 ms
+aten::mm (SwiGLU & QKV Linear)                           3.10%         73.70%        12.336 ms     293.7 us
+_ZN7cutlass7Kernel2I68cutlass_80_tensorop_bf16_s16816...  0.00%         55.61%         9.108 ms       1.822 ms
+LLM_DECODE_STEP (1 token + 2048 KV cache)                3.53%         20.45%         3.349 ms       3.349 ms
+aten::bmm (Batched Attention Q*K^T & Attn*V)             2.22%         11.37%         1.920 ms     159.9 us
+_ZN8internal5gemvx6kernelIii13__nv_bfloat16... (GEMV)    0.00%         10.59%         1.735 ms     115.6 us
+aten::softmax (Scaled Dot-Product Attention)             0.03%          5.09%         0.833 ms     138.8 us
+-------------------------------------------------------  ------------  ------------  ------------  ------------
+Self CPU time: 75.22ms | Self CUDA time: 16.38ms (NVIDIA RTX 5080 Laptop GPU, PyTorch 2.11.0+cu128)
 ```
 
 ### 2. vLLM 原生 Profiler 接入流程

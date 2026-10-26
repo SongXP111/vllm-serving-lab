@@ -19,8 +19,10 @@ if hasattr(sys.stderr, "reconfigure"):
     sys.stderr.reconfigure(encoding="utf-8")
 
 
-def parse_workload_name(input_len: int, output_len: int) -> str:
-    if input_len <= 256 and output_len <= 256:
+def parse_workload_name(input_len: int, output_len: int, prefix_len: int = 0, folder_name: str = "") -> str:
+    if prefix_len > 0 or "prefix" in folder_name.lower():
+        return "Shared Prefix"
+    elif input_len <= 256 and output_len <= 256:
         return "Short Chat"
     elif input_len >= 1024 and output_len <= 256:
         return "Long Prefill"
@@ -36,6 +38,12 @@ def main():
     parser.add_argument("--driver-version", type=str, default="N/A", help="NVIDIA Driver version")
     parser.add_argument("--model-name", type=str, default="qwen2.5-7b-instruct-fp8", help="Served model name")
     parser.add_argument("--dtype", type=str, default="FP8 (Dynamic)", help="Model weight precision")
+    parser.add_argument("--vllm-version", type=str, default="v0.25.1", help="vLLM release version")
+    parser.add_argument("--vllm-commit", type=str, default="d14f2e8", help="vLLM git commit / image digest")
+    parser.add_argument("--seed", type=int, default=42, help="Benchmark random seed")
+    parser.add_argument("--cuda-version", type=str, default="12.8", help="CUDA runtime version")
+    parser.add_argument("--torch-version", type=str, default="2.11.0+cu128", help="PyTorch version")
+    parser.add_argument("--os-platform", type=str, default="Linux WSL2 / Ubuntu 22.04 (Host: Windows 11)", help="OS and execution platform")
     parser.add_argument("--request-rate", type=str, default="inf", help="Traffic request arrival rate")
     parser.add_argument("--burstiness", type=str, default="1.0", help="Arrival burstiness factor")
     parser.add_argument("--gpu-hourly-cost", type=float, default=1.50, help="Estimated GPU cloud cost in USD/hour (for $/1M tokens)")
@@ -88,9 +96,10 @@ def main():
         # Extract dimensions
         in_len = data.get("random_input_len") or data.get("input_lens", [0])[0] if data.get("input_lens") else 0
         out_len = data.get("random_output_len") or data.get("output_lens", [0])[0] if data.get("output_lens") else 0
+        prefix_len = data.get("prefix_len", 0)
         concurrency = data.get("max_concurrency", 1)
         max_concurrent_requests = data.get("max_concurrent_requests", concurrency)
-        workload = parse_workload_name(in_len, out_len)
+        workload = parse_workload_name(in_len, out_len, prefix_len, sub)
 
         # Performance metrics
         output_tps = data.get("output_throughput", 0.0)
@@ -144,6 +153,7 @@ def main():
             "workload": workload,
             "in_len": in_len,
             "out_len": out_len,
+            "prefix_len": prefix_len,
             "concurrency": concurrency,
             "max_concurrency": max_concurrent_requests,
             "output_tps": round(output_tps, 1),
@@ -221,16 +231,31 @@ def main():
         "hardware": {
             "gpu_name": args.gpu_name,
             "driver_version": args.driver_version,
+            "cuda_version": args.cuda_version,
             "gpu_util_pct": args.gpu_util_pct,
             "peak_memory_mib": args.peak_memory_mib,
+        },
+        "software_stack": {
+            "vllm_version": args.vllm_version,
+            "vllm_commit": args.vllm_commit,
+            "torch_version": args.torch_version,
+            "os_platform": args.os_platform,
+            "container_runtime": "Docker Compose v2.0+ (NVIDIA Container Toolkit)",
         },
         "model": {
             "model_name": args.model_name,
             "precision_dtype": args.dtype,
         },
+        "workload_definitions": {
+            "Short Chat": "128 prompt tokens / 128 output tokens (Interactive conversational baseline)",
+            "Long Prefill": "2048 prompt tokens / 128 output tokens (Prefill compute-bound & TTFT tail latency stress)",
+            "Decode Heavy": "128 prompt tokens / 512 output tokens (Decode memory bandwidth-bound & TPOT tail latency stress)",
+            "Shared Prefix": "2048 prompt tokens (1800 shared prefix tokens) / 128 output tokens (Radix tree prefix caching reuse)",
+        },
         "traffic_pattern": {
             "request_rate": args.request_rate,
             "burstiness": args.burstiness,
+            "random_seed": args.seed,
             "distribution_description": distribution_desc,
         },
         "cost_model": {

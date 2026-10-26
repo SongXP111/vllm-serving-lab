@@ -9,6 +9,7 @@ if [ -f "$PROJECT_ROOT/.env" ]; then set -a; source "$PROJECT_ROOT/.env"; set +a
 MODEL_NAME="${VLLM_SERVED_MODEL:-qwen2.5-7b-instruct-fp8}"
 TOKENIZER_NAME="${VLLM_MODEL:-RedHatAI/Qwen2.5-7B-Instruct-FP8-dynamic}"
 MODEL_DTYPE="${VLLM_DTYPE:-FP8 (Dynamic)}"
+RANDOM_SEED="${BENCHMARK_SEED:-42}"
 REQUEST_RATE="${BENCHMARK_REQUEST_RATE:-inf}"
 BURSTINESS="${BENCHMARK_BURSTINESS:-1.0}"
 CONCURRENCIES=(1 2 4 8)
@@ -20,11 +21,13 @@ while [[ $# -gt 0 ]]; do
         --rate|-r)        REQUEST_RATE="$2"; shift 2 ;;
         --burstiness|-b)  BURSTINESS="$2"; shift 2 ;;
         --prompts|-p)     NUM_PROMPTS="$2"; shift 2 ;;
+        --seed|-s)        RANDOM_SEED="$2"; shift 2 ;;
         --help|-h)
             echo "Usage: bash scripts/benchmark.sh [OPTIONS]"
             echo "  -r, --rate <inf|N>       Arrival rate in RPS (default: inf = saturated burst; number = Poisson)"
             echo "  -b, --burstiness <1.0>   Traffic burstiness factor (1.0 = standard Poisson process)"
             echo "  -p, --prompts <N>        Total prompts per test (default: 32)"
+            echo "  -s, --seed <N>           Random seed (default: 42)"
             exit 0
             ;;
         *) echo "Unknown option: $1"; exit 1 ;;
@@ -58,6 +61,7 @@ echo "          vLLM Serving Lab - Comprehensive Benchmark Suite"
 echo "===================================================================="
 echo "🖥️  GPU Hardware    : ${GPU_NAME} (Driver: ${DRIVER_VERSION})"
 echo "🤖 Model & Precision: ${MODEL_NAME} (Dtype: ${MODEL_DTYPE})"
+echo "🎲 Random Seed      : ${RANDOM_SEED}"
 echo "📈 Traffic Arrival  : ${DISTRIB_TEXT}"
 echo "👥 Concurrency Grid : ${CONCURRENCIES[*]}"
 echo "📦 Prompts Per Run  : ${NUM_PROMPTS}"
@@ -67,16 +71,26 @@ run_test() {
     local workload_name=$1
     local input_len=$2
     local output_len=$3
-    local result_prefix=$4
+    local prefix_len=${4:-0}
+    local result_prefix=${5:-baseline}
 
     echo ""
     echo "--------------------------------------------------------------------"
-    echo "📊 Workload: ${workload_name} (Input: ${input_len}, Output: ${output_len})"
+    echo "📊 Workload: ${workload_name} (Input: ${input_len}, Output: ${output_len}, Prefix: ${prefix_len})"
     echo "--------------------------------------------------------------------"
 
     for c in "${CONCURRENCIES[@]}"; do
-        echo "⏳ [c=${c}] Executing bench serve (Num Prompts: ${NUM_PROMPTS})..."
-        local out_dir="/results/${result_prefix}/in${input_len}_out${output_len}_c${c}"
+        echo "⏳ [c=${c}] Executing bench serve (Num Prompts: ${NUM_PROMPTS}, Seed: ${RANDOM_SEED})..."
+        local folder_suffix="in${input_len}_out${output_len}"
+        if [ "${prefix_len}" -gt 0 ]; then
+            folder_suffix="${folder_suffix}_prefix${prefix_len}"
+        fi
+        local out_dir="/results/${result_prefix}/${folder_suffix}_c${c}"
+
+        local extra_args=()
+        if [ "${prefix_len}" -gt 0 ]; then
+            extra_args+=(--prefix-len "${prefix_len}")
+        fi
         
         # 在容器内部调用 vllm bench serve
         docker exec vllm-server vllm bench serve \
@@ -89,6 +103,8 @@ run_test() {
           --num-prompts ${NUM_PROMPTS} \
           --random-input-len ${input_len} \
           --random-output-len ${output_len} \
+          --seed ${RANDOM_SEED} \
+          "${extra_args[@]}" \
           --max-concurrency ${c} \
           "${RATE_ARGS[@]}" \
           --save-result \
@@ -96,7 +112,7 @@ run_test() {
           --result-dir ${out_dir} > /dev/null
 
         # 实时快速解析单轮结果
-        local host_dir="${PROJECT_ROOT}/results/${result_prefix}/in${input_len}_out${output_len}_c${c}"
+        local host_dir="${PROJECT_ROOT}/results/${result_prefix}/${folder_suffix}_c${c}"
         local latest_json=$(ls -t "${host_dir}"/*.json 2>/dev/null | head -1 || true)
         if [ -n "${latest_json}" ]; then
             python3 -c "
@@ -116,21 +132,25 @@ print(f'   ✅ Concurrency {c} Done: Throughput={tps:.1f} tok/s | P99 TTFT={ttft
 }
 
 # 1. 常规短对话 (Short Chat - 128 / 128)
-run_test "Short Chat" 128 128 "baseline"
+run_test "Short Chat" 128 128 0 "baseline"
 
 # 2. 长首字预载 (Long Prefill - 2048 / 128) - 重点测试预填充算力与 TTFT 尾延迟
-run_test "Long Prefill" 2048 128 "baseline"
+run_test "Long Prefill" 2048 128 0 "baseline"
 
 # 3. 重度生成 (Decode Heavy - 128 / 512) - 重点测试显存带宽与 TPOT 尾延迟
-run_test "Decode Heavy" 128 512 "baseline"
+run_test "Decode Heavy" 128 512 0 "baseline"
 
-# 4. 执行综合 SLA 汇总与报告生成
+# 4. 公共前缀复用 (Shared Prefix - 2048 / 128, prefix_len=1800) - 重点测试 Prefix Cache 命中与首字加速
+run_test "Shared Prefix" 2048 128 1800 "baseline"
+
+# 5. 执行综合 SLA 汇总与报告生成
 python3 "${SCRIPT_DIR}/parse_benchmark_results.py" \
     --result-dir "${PROJECT_ROOT}/results/baseline" \
     --gpu-name "${GPU_NAME}" \
     --driver-version "${DRIVER_VERSION}" \
     --model-name "${MODEL_NAME}" \
     --dtype "${MODEL_DTYPE}" \
+    --seed "${RANDOM_SEED}" \
     --request-rate "${REQUEST_RATE}" \
     --burstiness "${BURSTINESS}"
 

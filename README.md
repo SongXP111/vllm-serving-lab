@@ -128,7 +128,7 @@ bash scripts/run_all_benchmarks.sh --all
 
 #### 1️⃣ 基线负载压测 (Baseline Workloads)
 - **命令**：`bash scripts/benchmark.sh` (或 `-b`)
-- **场景**：对比在不同并发度（Concurrencies = 1, 2, 4, 8）下，常规对话 (Short Chat)、长文预载 (Long Prefill) 与重度解码 (Decode Heavy) 的 QPS 与延时表现。并在压测结束后自动执行 `parse_benchmark_results.py` 汇总结算完整 SLA 报告。
+- **场景**：固定随机种子（`--seed 42`）与硬件环境，对比在不同并发度（Concurrencies = 1, 2, 4, 8）下，**常规对话 (Short Chat: 128/128)**、**长文预载 (Long Prefill: 2048/128)**、**重度解码 (Decode Heavy: 128/512)** 与 **公共前缀复用 (Shared Prefix: 2048/128 prefix=1800)** 四种标准化 Workload 的 QPS、TTFT、TPOT、E2E 及成本表现。并在压测结束后自动执行 `parse_benchmark_results.py` 汇总结算完整 16 组 SLA 报告。
 
 #### 2️⃣ 实验一：前缀缓存优化 (Prefix Caching)
 - **命令**：`bash scripts/run_exp1_prefix_caching.sh` (或 `-1`)

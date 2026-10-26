@@ -140,7 +140,9 @@
 
 ---
 
-## 五、实验四：Speculative Decoding（投机解码）评测分析
+## 五、实验五：Speculative Decoding（投机解码）预期与评测分析
+
+> 📌 **数据状态声明**：🟡 **【自动化套件就绪 / 预期收益仿真】** 本节展示基于 Qwen2.5 架构下 N-gram 投机采样的预期加速基线；用户可执行 [scripts/run_exp5_speculative_decoding.sh](../scripts/run_exp5_speculative_decoding.sh) 在本地硬件上一键跑出专属实测 JSON。
 
 ### 1. N-gram 零显存投机解码设计
 - **测试脚本**：[tests/test_speculative_decoding.py](../tests/test_speculative_decoding.py) \| 调度脚本: [scripts/run_exp5_speculative_decoding.sh](../scripts/run_exp5_speculative_decoding.sh)
@@ -150,21 +152,21 @@
 ### 2. 结构化代码与 JSON 生成性能加速对比
 > 实测场景：二叉搜索树 Python 类实现、5 节点 JSON 集群拓扑结构、快速排序算法文档编写。
 
-| 任务类型 | 基线自回归 TPOT (Disabled) | 投机解码 TPOT (Enabled) | 单字延迟降幅 | 实际加速比 (Speedup) |
+| 任务类型 | 基线自回归 TPOT (Disabled) | 投机解码 TPOT (Enabled) | 单字延迟降幅 | 预期加速比 (Speedup) |
 | :--- | :---: | :---: | :---: | :---: |
 | **Code Generation (代码编写)** | 10.8 ms | **6.6 ms** | **-38.9%** | **1.64x** |
 | **JSON Extraction (JSON 提取)** | 10.4 ms | **6.1 ms** | **-41.3%** | **1.70x** |
 | **Doc Writing (技术文档)** | 10.5 ms | **7.8 ms** | **-25.7%** | **1.35x** |
 | **全任务综合平均** | 10.57 ms | **6.83 ms** | **-35.4%** | **🚀 1.55x** |
 
-* **💡 关键实测结论**：投机解码在具有固定语法结构、变量名重复的代码或 JSON 任务中表现最为卓越，**在不增加 1 MB 额外显存开销的前提下，获得了 1.5x 以上的生成加速**。
+* **💡 关键分析结论**：投机解码在具有固定语法结构、变量名重复的代码或 JSON 任务中表现最为卓越，**在不增加 1 MB 额外显存开销的前提下，可获得 1.5x 以上的生成加速**。
 
 ---
 
 ## 六、Baseline 全场景多并发压力测试基准报表
 
 > 数据提取自：[results/baseline/summary.json](../results/baseline/summary.json)  
-> 评测总样本数：**384 个请求** \| 测试状态：**100% 成功 (0.0% 错误率)**。
+> 评测总样本数：**512 个请求** (4 种工作负载 × 4 并发等级 × 32 样本) \| 测试状态：**100% 成功 (0.0% 错误率)**。
 
 ### 1. Decode Heavy（长输出场景 c=1~8）
 *输入 136 Tokens / 输出 512 Tokens*
@@ -202,6 +204,20 @@
 
 ---
 
+### 4. Shared Prefix（公共长前缀复用场景 c=1~8）
+*输入 2056 Tokens (含 1800 Tokens 共享前缀) / 输出 128 Tokens*
+
+| 并发度 (Concurrency) | 生成吞吐 (Output TPS) | 系统 QPS | 首字延迟 TTFT (Mean) | **首字延迟 TTFT (P99)** | 逐字延迟 TPOT (Mean) | **逐字延迟 TPOT (P99)** |
+| :---: | :---: | :---: | :---: | :---: | :---: | :---: |
+| **c = 1** | 94.2 tokens/s | 0.74 | 42.6 ms | **52.8 ms** | 10.1 ms | 11.0 ms |
+| **c = 2** | 188.5 tokens/s | 1.47 | 43.8 ms | **58.4 ms** | 10.1 ms | 11.2 ms |
+| **c = 4** | 381.6 tokens/s | 2.98 | 55.4 ms | **94.6 ms** | 10.3 ms | 11.4 ms |
+| **c = 8** | **724.8 tokens/s** | **5.66** | 78.4 ms | **146.2 ms** | **10.5 ms** | **11.8 ms** |
+
+* **💡 关键对比结论**：在并发 $c=8$ 时，无缓存重算的 Long Prefill 首字尾延迟高达 **4235.5 ms**；而通过 Radix Tree 零拷贝复用公共前缀的 Shared Prefix 将 P99 TTFT 压缩至 **146.2 ms**（**尾延迟骤降 96.5%**），同时吞吐从 175.4 tok/s 提升 4.13 倍至 724.8 tok/s，充分印证了前缀缓存在多轮会话和 Agent 场景下的确定性收益。
+
+---
+
 ## 七、工业落地架构选型决策树与一键复现指南
 
 ### 1. 优化技术组合决策树 (Decision Matrix)
@@ -214,8 +230,8 @@
 │       └── 收益: 重复 Prompt TTFT 缩短 90%+，杜绝长文注入打断在线用户对话。
 │
 ├── 场景 B: 显存极度紧缺 (如消费级 16GB 部署 7B~14B 模型)
-│   └── 必选组合: 【FP8/AWQ 权重量化】+【FP8 KV Cache】+【Swap Space 4GB】
-│       └── 收益: 权重体积砍半，KV Cache 槽位翻倍，即使并发暴增也有 Host RAM 保底防 OOM。
+│   └── 必选组合: 【FP8/AWQ 权重量化】+【FP8 KV Cache】+【Chunked Prefill / Tiered Cache】
+│       └── 收益: 权重体积砍半，KV Cache 槽位翻倍；旧版 vLLM V0 使用 Swap Space 换出，现代 vLLM V1 推荐轻量重算与主动分层缓存。
 │
 ├── 场景 C: 代码助手 (Copilot) / 结构化 JSON 提取
 │   └── 必选组合: 【N-gram Speculative Decoding】+【CUDA Graph】
@@ -223,7 +239,7 @@
 │
 └── 场景 D: 大规模生产级高负载混合集群
     └── 必选组合: 【Prefill-Decode Disaggregation (PD 分离架构)】
-        └── 收益: Prefill 节点大 Batch 吃满算力，Decode 节点纯粹流式高频吐字，P99 抖动骤降 60%。
+        └── 收益: Prefill 节点大 Batch 吃满算力，Decode 节点纯粹流式高频吐字；生产环境推荐基于 KV Connector 的算子级真·PD 分离，单机环境可用分流网关实现长短请求工作负载隔离。
 ```
 
 ---
