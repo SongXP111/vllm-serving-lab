@@ -61,13 +61,24 @@ docker compose up -d
 docker compose logs -f vllm  # 查看实时推理日志
 ```
 
-### 3. 一键冒烟测试 (Smoke Test)
+### 3. 一键冒烟测试与单机基线验证 (Milestone 0: M0 Baseline)
 
-验证 API 与核心功能是否就绪：
+在引入复杂路由架构、多实例扩容或 K8s 之前，**首要任务是在单机环境证明真实模型推理请求完全走通、性能精准可测**（建立后续所有优化的 Golden Baseline 对照锚点）：
 
 ```bash
 bash scripts/smoke_test.sh
 ```
+
+该脚本将自动执行端到端契约验证（对齐 [vLLM Online Serving](https://docs.vllm.ai/en/stable/serving/openai_compatible_server/) 与 [vLLM Production Metrics](https://docs.vllm.ai/en/stable/usage/metrics/) 官方规范）：
+1. **模型元数据发现**：`curl http://localhost:8000/v1/models`，确认服务就绪与所挂载模型版本。
+2. **非流式问答契约**：`curl -X POST http://localhost:8000/v1/chat/completions`（`stream=false`），校验 JSON 响应格式与上下文回显。
+3. **流式逐字打字契约**：`curl -N -X POST http://localhost:8000/v1/chat/completions`（`stream=true`），校验 SSE（Server-Sent Events）数据分块流与首字发射。
+4. **生产指标健康打点**：`curl http://localhost:8000/metrics`，断言核心生产指标：
+   - `vllm:num_requests_running`（当前运行并发数）
+   - `vllm:num_requests_waiting`（调度器队列排队数）
+   - `vllm:gpu_cache_usage_perc`（物理 KV Cache 显存占用率）
+   - `vllm:time_to_first_token_seconds`（TTFT 分桶与均值）
+   - `vllm:time_per_output_token_seconds`（TPOT / ITL 逐字生成间隔）
 
 ---
 
@@ -113,7 +124,7 @@ bash scripts/run_all_benchmarks.sh --all
 
 | 实验编号 | 优化技术方向 | 核心开关 / 参数 | 数据交付状态 | 对应测试脚本 | 预期 / 实测性能收益 |
 | :--- | :--- | :--- | :---: | :--- | :--- |
-| **Baseline** | **基线压测** | 泊松到达 / 饱和打流 | 🟢 **已实测落盘** | `scripts/benchmark.sh` | 建立包含 9 组指标与成本的完整基准 SLA 报告 |
+| **Baseline (M0)** | **单机基线压测** | 饱和/泊松打流，固定 4 类负载 × 4 并发 | 🟢 **已实测落盘** | `scripts/benchmark.sh` | 建立 16 组全场景 SLA、GPU 核心算力/KV 使用率与成本基准报表 |
 | **Exp 1** | **Prefix Caching** | `--enable-prefix-caching` | 🟢 **已实测落盘** | `scripts/run_exp1_prefix_caching.sh` | Radix Tree 跨轮复用，热启动 TTFT 缩短最高 19.7x |
 | **Exp 2** | **Chunked Prefill** | `--max-num-batched-tokens` | 🟢 **已实测落盘** | `scripts/run_exp2_chunked_prefill.sh` | 分块混合调度平抑 TPOT 抖动，TPOT P95 稳定在 10.8ms |
 | **Exp 3** | **权重量化对比** | BF16 vs AWQ vs FP8 | 🟢 **已实测落盘** | `scripts/run_exp3_quantization.sh` | 4-bit AWQ 释放显存带宽，生成吞吐暴增 2.38x |

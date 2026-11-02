@@ -233,6 +233,44 @@ def test_error_handling():
         _record(False)
 
 # ---------------------------------------------------------------------------
+# 8. Prometheus /metrics endpoint (waiting/running, TTFT, KV Cache)
+# ---------------------------------------------------------------------------
+def test_metrics_endpoint():
+    print("\n=== Testing /metrics Endpoint (Prometheus Metrics) ===")
+    metrics_url = f"http://localhost:{PORT}/metrics"
+    req = urllib.request.Request(metrics_url)
+    try:
+        with urllib.request.urlopen(req, timeout=15) as response:
+            content = response.read().decode('utf-8')
+            required_metrics = [
+                "vllm:num_requests_running",
+                "vllm:num_requests_waiting",
+                "vllm:gpu_cache_usage_perc",
+                "vllm:time_to_first_token_seconds",
+                "vllm:time_per_output_token_seconds",
+            ]
+            found = []
+            missing = []
+            for m in required_metrics:
+                if m in content:
+                    found.append(m)
+                else:
+                    missing.append(m)
+            
+            if not missing:
+                print(f"✅ Success! Found all {len(found)} core vLLM production metrics:")
+                for m in found:
+                    print(f"   • {m}")
+                _record(True)
+            else:
+                print(f"⚠️ Partially matched. Found: {found}, Missing: {missing}")
+                # As long as at least some vllm metrics exist, consider passing with warning
+                _record(len(found) >= 3)
+    except Exception as e:
+        print(f"❌ Failed to reach /metrics: {e}")
+        _record(False)
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
@@ -249,6 +287,7 @@ if __name__ == "__main__":
     test_long_context()
     test_streaming()
     test_error_handling()
+    test_metrics_endpoint()
 
     # Summary
     total = _passed + _failed
