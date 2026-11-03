@@ -40,7 +40,11 @@ flowchart LR
 1. **服务级宏观三角分诊（Macro Triangulation）**：
    * **指标抓取**：Prometheus 实时打点或执行 `bash scripts/profile_service.sh --macro`。
    * **时间解耦**：将端到端延迟严格拆解为三个正交区间：
-     $$\text{E2E Latency} = \text{Queue Time} + \text{TTFT (Prefill)} + \sum \text{ITL (Decode)}$$
+
+$$
+\text{E2E Latency} = \text{Queue Time} + \text{TTFT (Prefill)} + \sum \text{ITL (Decode)}
+$$
+
    * **分诊判定**：若 Queue 占比高 → 调度队列问题；若 TTFT 占比高 → 算力密集问题；若 Decode 耗时长 → 显存带宽问题。
 2. **微观工具深度下钻（Micro Profiling）**：
    * 借助 **PyTorch Profiler**（`scripts/torch_profiler.py`）定位算子级 CPU/CUDA 耗时与内存分配。
@@ -109,7 +113,9 @@ flowchart LR
 
 在大模型推理架构中，优化没有“免费午餐”，本质是求解如下约束最优化问题：
 
-$$\max_{\boldsymbol{\theta}} \quad \text{Throughput}(\boldsymbol{\theta}) \quad \text{s.t.} \quad \begin{cases} \text{P99 TTFT}(\boldsymbol{\theta}) \le \text{SLA}_{\text{TTFT}} \\ \text{P99 TPOT}(\boldsymbol{\theta}) \le \text{SLA}_{\text{TPOT}} \\ \text{Error Rate}(\boldsymbol{\theta}) = 0\% \\ \text{Cost per 1M Tokens}(\boldsymbol{\theta}) \le \text{Budget} \end{cases}$$
+$$
+\max_{\boldsymbol{\theta}} \quad \text{Throughput}(\boldsymbol{\theta}) \quad \text{s.t.} \quad \begin{cases} \text{P99 TTFT}(\boldsymbol{\theta}) \le \text{SLA}_{\text{TTFT}} \\ \text{P99 TPOT}(\boldsymbol{\theta}) \le \text{SLA}_{\text{TPOT}} \\ \text{Error Rate}(\boldsymbol{\theta}) = 0\% \\ \text{Cost per 1M Tokens}(\boldsymbol{\theta}) \le \text{Budget} \end{cases}
+$$
 
 ```
                            【四维帕累托平衡博弈面】

@@ -62,28 +62,63 @@
 在工业级推理服务 SLA（服务等级协议）中，通常由以下 5 大指标构成评价标准：
 
 ### 1. TTFT (Time To First Token，首字延迟)
-- **数学定义**：
-  $$\text{TTFT} = t_{\text{first token received}} - t_{\text{request sent}}$$
-- **内部构成**：
-  $$\text{TTFT} = T_{\text{network RTT}} + T_{\text{queue waiting}} + T_{\text{prefill compute}} + T_{\text{first decode step}}$$
-- **生产意义**：衡量用户从点击发送到看到界面开始吐字的反应时间。在 RAG（知识检索库）、长 PDF 总结场景下，Prefill 计算时间直接决定了 TTFT。
+
+**数学定义**：从客户端发出请求到接收到首个生成 Token 的物理时间差：
+
+$$
+\text{TTFT} = t_{\text{first token received}} - t_{\text{request sent}}
+$$
+
+**内部构成解耦**：
+
+$$
+\text{TTFT} = T_{\text{network RTT}} + T_{\text{queue waiting}} + T_{\text{prefill compute}} + T_{\text{first decode step}}
+$$
+
+* **生产意义**：衡量用户从点击发送到看到界面开始吐字的反应时间。在 RAG（知识检索库）、长 PDF 总结场景下，Prefill 计算时间直接决定了 TTFT。
+
+---
 
 ### 2. TPOT (Time Per Output Token，单字生成耗时) 与 ITL (Inter-Token Latency)
-- **数学定义**：对于生成长度为 $M$ 的响应，第 $i$ 个 Token 到达时间记为 $t_i$，则单字间隔序列为：
-  $$\Delta t_i = t_i - t_{i-1} \quad (i = 2, 3, \dots, M)$$
-  $$\text{TPOT}_{\text{mean}} = \frac{1}{M-1} \sum_{i=2}^{M} \Delta t_i$$
-- **生产意义**：衡量流式生成（SSE 打字机模式）的均匀程度。人类正常舒适阅读速度大约为 **每秒 4 ~ 8 个英文单词（约 50ms ~ 150ms/Token）**。如果 TPOT 大于 100ms 或出现周期性长间隔，用户会感知到明显的打字顿挫卡顿。
+
+**数学定义**：对于生成长度为 $M$ 的响应，第 $i$ 个 Token 到达时间记为 $t_i$，则单字间隔序列（ITL）为：
+
+$$
+\Delta t_i = t_i - t_{i-1} \quad (i = 2, 3, \dots, M)
+$$
+
+平均单字生成耗时（Mean TPOT）定义为：
+
+$$
+\text{TPOT}_{\text{mean}} = \frac{1}{M-1} \sum_{i=2}^{M} \Delta t_i
+$$
+
+* **生产意义**：衡量流式生成（SSE 打字机模式）的均匀程度。人类正常舒适阅读速度大约为 **每秒 4 ~ 8 个英文单词（约 50ms ~ 150ms/Token）**。如果 TPOT 大于 100ms 或出现周期性长间隔，用户会感知到明显的打字顿挫卡顿。
+
+---
 
 ### 3. P99 尾延迟 (P99 Tail Latency)
-- **定义**：将一段时间内所有请求的延迟按从小到大排序，处于第 99 百分位点的值。
-- **生产意义**：均值（Mean）往往会掩盖偶发的系统抖动；P99 真实反映了在突发并发、显存置换（Swap）、大 Prompt 抢占等最坏情况下的极端体验，是判定高可用 SLA 的底线指标。
+
+* **定义**：将一段时间内所有请求的延迟按从小到大排序，处于第 99 百分位点的值。
+* **生产意义**：均值（Mean）往往会掩盖偶发的系统抖动；P99 真实反映了在突发并发、显存置换（Swap）、大 Prompt 抢占等最坏情况下的极端体验，是判定高可用 SLA 的底线指标。
+
+---
 
 ### 4. 吞吐量 (Throughput: Tokens/s 与 QPS)
-- **Prompt TPS (Prefill 吞吐)**：
-  $$\text{TPS}_{\text{prompt}} = \frac{\sum \text{Prompt Tokens}}{\sum T_{\text{prefill}}}$$
-- **Generation TPS (Decode 吞吐)**：
-  $$\text{TPS}_{\text{gen}} = \frac{\sum \text{Generated Tokens}}{\sum T_{\text{decode}}}$$
-- **QPS (Queries Per Second)**：每秒完成端到端请求的次数。
+
+**Prompt TPS (Prefill 阶段吞吐)**：
+
+$$
+\text{TPS}_{\text{prompt}} = \frac{\sum \text{Prompt Tokens}}{\sum T_{\text{prefill}}}
+$$
+
+**Generation TPS (Decode 阶段吞吐)**：
+
+$$
+\text{TPS}_{\text{gen}} = \frac{\sum \text{Generated Tokens}}{\sum T_{\text{decode}}}
+$$
+
+* **系统 QPS (Queries Per Second)**：每秒完成端到端请求的次数。
 
 ---
 

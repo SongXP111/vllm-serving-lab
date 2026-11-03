@@ -74,8 +74,12 @@
 ### Layer 3: Memory Traffic 层 (显存带宽与访存瓶颈)
 * **典型症状**：高并发纯生成场景下，Tokens/s 无法随着算力提升线性增长；GPU 功率（Watts）维持中等偏低水平。
 * **根因分析**：自回归单字生成需要频繁读取全部模型权重与累积的 KV 缓存，系统受限于 GPU 物理显存带宽（如 RTX 5080 的 GDDR7 带宽或 A100 的 HBM 带宽）。
-* **验证工具**：`vllm:generation_tokens_total` vs 理论显存带宽上限公式：
-  $$\text{Max Throughput (tok/s)} \approx \frac{\text{Memory Bandwidth (GB/s)}}{\text{Model Weight Size (GB)} + \text{KV Cache Size per Token (GB)}}$$
+* **验证工具**：`vllm:generation_tokens_total` 对比理论显存带宽上限公式：
+
+$$
+\text{Max Throughput (tok/s)} \approx \frac{\text{Memory Bandwidth (GB/s)}}{\text{Model Weight Size (GB)} + \text{KV Cache Size per Token (GB)}}
+$$
+
 * **工程解法**：采用权重量化（AWQ 4-bit / FP8 8-bit），直接让权重显存搬运量减半，带宽利用率成倍放大。
 
 ### Layer 4: Quantization 层 (量化收益 vs 解量化开销)

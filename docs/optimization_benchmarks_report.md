@@ -106,7 +106,7 @@
 
 ### 1. 模型权重量化实测 (BF16 vs AWQ 4-bit)
 > 数据源文件：[results/quantization/4B-BF16.json](../results/quantization/4B-BF16.json) 与 [4B-AWQ.json](../results/quantization/4B-AWQ.json)  
-> 评测环境：相同 GPU 显存分配下并发度 $c=4$。
+> 评测环境：相同 GPU 显存分配下并发度 c = 4。
 
 ```
        端到端生成吞吐 (Tokens/s) 对比: AWQ 量化 vs BF16
@@ -214,7 +214,7 @@
 | **c = 4** | 381.6 tokens/s | 2.98 | 55.4 ms | **94.6 ms** | 10.3 ms | 11.4 ms |
 | **c = 8** | **724.8 tokens/s** | **5.66** | 78.4 ms | **146.2 ms** | **10.5 ms** | **11.8 ms** |
 
-* **💡 关键对比结论**：在并发 $c=8$ 时，无缓存重算的 Long Prefill 首字尾延迟高达 **4235.5 ms**；而通过 Radix Tree 零拷贝复用公共前缀的 Shared Prefix 将 P99 TTFT 压缩至 **146.2 ms**（**尾延迟骤降 96.5%**），同时吞吐从 175.4 tok/s 提升 4.13 倍至 724.8 tok/s，充分印证了前缀缓存在多轮会话和 Agent 场景下的确定性收益。
+* **💡 关键对比结论**：在并发 c = 8 时，无缓存重算的 Long Prefill 首字尾延迟高达 **4235.5 ms**；而通过 Radix Tree 零拷贝复用公共前缀的 Shared Prefix 将 P99 TTFT 压缩至 **146.2 ms**（**尾延迟骤降 96.5%**），同时吞吐从 175.4 tok/s 提升 4.13 倍至 724.8 tok/s，充分印证了前缀缓存在多轮会话和 Agent 场景下的确定性收益。
 
 ---
 
