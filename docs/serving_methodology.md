@@ -114,7 +114,13 @@ $$
 在大模型推理架构中，优化没有“免费午餐”，本质是求解如下约束最优化问题：
 
 $$
-\max_{\boldsymbol{\theta}} \quad \text{Throughput}(\boldsymbol{\theta}) \quad \text{s.t.} \quad \begin{cases} \text{P99 TTFT}(\boldsymbol{\theta}) \le \text{SLA}_{\text{TTFT}} \\ \text{P99 TPOT}(\boldsymbol{\theta}) \le \text{SLA}_{\text{TPOT}} \\ \text{Error Rate}(\boldsymbol{\theta}) = 0\% \\ \text{Cost per 1M Tokens}(\boldsymbol{\theta}) \le \text{Budget} \end{cases}
+\max_{\boldsymbol{\theta}} \quad \text{Throughput}(\boldsymbol{\theta}) \quad \text{s.t.} \quad
+\begin{cases}
+\text{P99 TTFT}(\boldsymbol{\theta}) \le \text{SLA}_{\text{TTFT}} \\
+\text{P99 TPOT}(\boldsymbol{\theta}) \le \text{SLA}_{\text{TPOT}} \\
+\text{Error Rate}(\boldsymbol{\theta}) = 0 \\
+\text{Cost}(\boldsymbol{\theta}) \le \text{Budget}
+\end{cases}
 $$
 
 ```
