@@ -45,11 +45,11 @@
       ▼                            ▼                            ▼
 【解法 1】量化 (AWQ/FP8)      【解法 3】Chunked Prefill      【解法 6】PagedAttention
   权重减半，搬运量腰斩，带宽    切成小块分步调度，与Decode    类似OS虚拟分页，内存碎片降至0
-  利用率翻倍 $\to$ 吞吐飙升      穿插混部(Piggybacking)
+  利用率翻倍 → 吞吐飙升      穿插混部(Piggybacking)
                                                                 【解法 7】KV Cache 量化
 【解法 2】投机解码 (Spec-Dec) 【解法 4】Prefix Caching        FP8压缩使KV槽位直接翻倍
   单步猜测多个Token批量验证，   Radix Tree 缓存公共前缀，
-  打破逐字自回归串行串供        跳过重复 $O(N^2)$ 注意力计算
+  打破逐字自回归串行串供        跳过重复 O(N²) 注意力计算
                                                                 【解法 8】CPU Swap 换出
 【解法 5】CUDA Graph          【解法 9】PD 分离架构           突发显存过载时置换到内存保底
   预录计算图，消除CPU小算子    Prefill与Decode物理节点隔离，

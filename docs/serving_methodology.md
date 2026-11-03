@@ -2,7 +2,7 @@
 
 > **核心宗旨**：大模型推理服务（LLM Serving）的性能工程绝非盲目的调参拼凑，而是一门基于实证证据的闭环科学体系。  
 > 完整的工业级推理优化必须严格遵循五步闭环方法论：  
-> **Profile（全息画像） $\to$ Bottleneck Analysis（多维瓶颈诊断） $\to$ Optimization（靶向调优） $\to$ Benchmark（全维复测） $\to$ Regression（回归门禁）**。  
+> **Profile（全息画像） → Bottleneck Analysis（多维瓶颈诊断） → Optimization（靶向调优） → Benchmark（全维复测） → Regression（回归门禁）**。  
 > 其终极目标是在 **Latency（低延迟）、Throughput（高吞吐）、Concurrency（高并发）与 Cost（经济成本）** 之间达成经过数学验证的可量化帕累托最优平衡（Pareto Optimal Trade-off）。
 
 ---
@@ -41,7 +41,7 @@ flowchart LR
    * **指标抓取**：Prometheus 实时打点或执行 `bash scripts/profile_service.sh --macro`。
    * **时间解耦**：将端到端延迟严格拆解为三个正交区间：
      $$\text{E2E Latency} = \text{Queue Time} + \text{TTFT (Prefill)} + \sum \text{ITL (Decode)}$$
-   * **分诊判定**：若 Queue 占比高 $\to$ 调度队列问题；若 TTFT 占比高 $\to$ 算力密集问题；若 Decode 耗时长 $\to$ 显存带宽问题。
+   * **分诊判定**：若 Queue 占比高 → 调度队列问题；若 TTFT 占比高 → 算力密集问题；若 Decode 耗时长 → 显存带宽问题。
 2. **微观工具深度下钻（Micro Profiling）**：
    * 借助 **PyTorch Profiler**（`scripts/torch_profiler.py`）定位算子级 CPU/CUDA 耗时与内存分配。
    * 借助 **Nsight Systems**（`nsys`）排查算子发射间隙（Launch Overhead）与 CPU↔GPU 同步等待（`cudaStreamSynchronize`）。
@@ -87,7 +87,7 @@ flowchart LR
   3. 固定输入/输出 Token 长度矩阵（128/128, 2048/128, 128/512）。
   4. 固定并发梯度（c = 1, 2, 4, 8）。
   5. 固定流量到达过程（Saturated Closed-loop 或 Poisson Process）。
-* **拒绝“只看 Tokens/s”**：必须同步评估 **P99 TTFT（首字尾延迟）**、**P99 TPOT（逐字尾延迟）**、**P99 E2E 延迟**、**显存占用峰值**、**错误率/OOM 率** 与 **经济成本（$/1M Tokens）**。
+* **拒绝“只看 Tokens/s”**：必须同步评估 **P99 TTFT（首字尾延迟）**、**P99 TPOT（逐字尾延迟）**、**P99 E2E 延迟**、**显存占用峰值**、**错误率/OOM 率** 与 **经济成本（\$/1M Tokens）**。
 
 ---
 
@@ -99,9 +99,9 @@ flowchart LR
   bash scripts/run_regression_suite.sh
   ```
 * 回归断言器（[scripts/check_regression.py](../scripts/check_regression.py)）自动对比候选版本与 Golden Baseline：
-  * 若目标吞吐提升，但导致 **TTFT P99 恶化超过 15%** $\to$ **REGRESSION FAIL**！
-  * 若单字速度加快，但导致 **OOM Rate > 0%** $\to$ **REGRESSION FAIL**！
-  * 若显存节省，但导致 **单 Token 综合服务成本变高** $\to$ **REGRESSION FAIL**！
+  * 若目标吞吐提升，但导致 **TTFT P99 恶化超过 15%** → **REGRESSION FAIL**！
+  * 若单字速度加快，但导致 **OOM Rate > 0%** → **REGRESSION FAIL**！
+  * 若显存节省，但导致 **单 Token 综合服务成本变高** → **REGRESSION FAIL**！
 
 ---
 

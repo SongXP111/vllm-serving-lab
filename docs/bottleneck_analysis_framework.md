@@ -27,7 +27,7 @@
 
 ### 假象 1：GPU 利用率高达 95%+，但生成吞吐（Tokens/s）极低
 * **真相：显存带宽瓶颈（Memory-Bandwidth Bound）**。
-* **机制**：在自回归解码（Decode）阶段，计算强度（Arithmetic Intensity）极低（$< 2 \text{ FLOPs/Byte}$）。Tensor Core 处于绝大部分时间等待从 GDDR/HBM 显存拉取几十亿模型权重的“饥饿”状态。虽然硬件采样周期内检测到核心处于活动状态，但 SM（流多处理器）内部的大量 Warp 全在等待内存加载（Memory Stall）。
+* **机制**：在自回归解码（Decode）阶段，计算强度（Arithmetic Intensity）极低（`< 2 FLOPs/Byte`）。Tensor Core 处于绝大部分时间等待从 GDDR/HBM 显存拉取几十亿模型权重的“饥饿”状态。虽然硬件采样周期内检测到核心处于活动状态，但 SM（流多处理器）内部的大量 Warp 全在等待内存加载（Memory Stall）。
 
 ### 假象 2：GPU 利用率仅有 20%~30%，但请求延迟（P99）高得惊人
 * **真相：CPU 驱动发射瓶颈（Kernel Launch Overhead）或排队阻塞（Queueing）**。

@@ -167,8 +167,8 @@ ncu --set full \
 
 ### 2. Roofline 模型：判断算子是否逼近硬件天花板
 Nsight Compute 会自动绘制 **Roofline（屋顶模型）图**：
-* **计算强度横坐标**：$\text{FLOPs/Byte}$。
-* **吞吐纵坐标**：$\text{GFLOPs/s}$ 或 $\text{TFLOPs/s}$。
+* **计算强度横坐标**：`FLOPs/Byte`。
+* **吞吐纵坐标**：`GFLOPs/s` 或 `TFLOPs/s`。
 * **判定法则**：
   * 若算子位于 **左侧斜坡（Memory Bandwidth Roof）** 上：说明该算子已榨干了当前 GPU 物理显存带宽（如 1000 GB/s），计算优化无法提升它，**必须通过量化（减少字节搬运）来解决**。
   * 若算子位于 **右侧平顶（Peak Tensor Core Compute Roof）** 下方很远处：说明该算子算力受限但效率不高，存在寄存器溢出（Spill）、共享内存冲突（Bank Conflict）或并行度不足问题。

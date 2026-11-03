@@ -63,9 +63,9 @@
 
 ### 1. TTFT (Time To First Token，首字延迟)
 - **数学定义**：
-  $$\text{TTFT} = t_{\text{first\_token\_received}} - t_{\text{request\_sent}}$$
+  $$\text{TTFT} = t_{\text{first token received}} - t_{\text{request sent}}$$
 - **内部构成**：
-  $$\text{TTFT} = T_{\text{network\_rtt}} + T_{\text{queue\_waiting}} + T_{\text{prefill\_compute}} + T_{\text{first\_decode\_step}}$$
+  $$\text{TTFT} = T_{\text{network RTT}} + T_{\text{queue waiting}} + T_{\text{prefill compute}} + T_{\text{first decode step}}$$
 - **生产意义**：衡量用户从点击发送到看到界面开始吐字的反应时间。在 RAG（知识检索库）、长 PDF 总结场景下，Prefill 计算时间直接决定了 TTFT。
 
 ### 2. TPOT (Time Per Output Token，单字生成耗时) 与 ITL (Inter-Token Latency)
