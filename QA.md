@@ -11,6 +11,7 @@
 - [Q3: 投机解码（Speculative Decoding）中，大模型验证不也是算一遍吗，为什么比自己生成快？为什么小模型每次只猜 3~5 个词而不是一次性全写完？](#q3-投机解码speculative-decoding中大模型验证不也是算一遍吗为什么比自己生成快为什么小模型每次只猜-35-个词而不是一次性全写完)
 - [Q4: 在 PD 分离架构中，跨机传输 KV Cache 难道不费时间和带宽吗？如果 Decode 显存满了接不住怎么办？普通机房如何选型？](#q4-在-pd-分离架构中跨机传输-kv-cache-难道不费时间和带宽吗如果-decode-显存满了接不住怎么办普通机房如何选型)
 - [Q5: 既然 vLLM 自带了 HTTP API Server，为什么生产环境必须先挡一层自己的 Gateway？为什么 M1 第一步规定“先只连 1 台 vLLM，不做智能路由”？](#q5-既然-vllm-自带了-http-api-server为什么生产环境必须先挡一层自己的-gateway为什么-m1-第一步规定先只连-1-台-vllm不做智能路由)
+- [Q6: 在流式推理（SSE）中，已经发出 HTTP Headers 后为什么不能再随意返回另一份 JSON 错误？M1 Step 1 的五大失败测试如何证明零资源泄漏？](#q6-在流式推理sse中已经发出-http-headers-后为什么不能再随意返回另一份-json-错误m1-step-1-的五大失败测试如何证明零资源泄漏)
 
 ---
 
@@ -314,6 +315,57 @@ vLLM 自带的 `--api-key` 仅能校验单一静态密码，无法实现租户�
    * 异步流式代理隐藏着连接池耗尽、协程悬挂、断连未清理等诸多底层 IO 陷阱。
    * 如果一上来把“异步流式代理 + 排队限流 + 多节点 Prefix 路由”揉在一起写，一旦压测卡死或延迟飙升，根本无法定位是 **路由算法选错了节点** 还是 **网关 IO 管道本身漏水**。
    * 先在 `1 Gateway → 1 vLLM` 的极简拓扑下通过全部异常测试（断连、慢客户端、后端中途崩溃、并发连接池复用），把单根管道锤炼得滴水不漏后，后续叠加 Bounded Queue（Step 2）与 Prefix-aware Router（M2）就会水到渠成。
+
+---
+
+### Q6: 在流式推理（SSE）中，已经发出 HTTP Headers 后为什么不能再随意返回另一份 JSON 错误？M1 Step 1 的五大失败测试如何证明零资源泄漏？
+
+#### ❓ 问题背景
+在实现 `gateway/app.py`（M1 Step 1）时，验收要求明确规定：
+> *“必须做的失败测试：客户端收到若干 token 后主动断开；慢客户端读取；backend 在首字前失败与流式输出中途失败；多请求并发。记录是否资源泄漏、连接是否及时关闭，以及已经发出 HTTP headers 后为什么不能再随意返回另一份 JSON 错误。”*
+
+---
+
+#### 💡 核心解析一：已经发出 HTTP Headers 后，为什么不能再返回另一份 HTTP 500/502 JSON 错误？
+
+这源于 **HTTP/1.1 字节流协议（Wire Protocol）与 ASGI 状态机的单向不可逆性**：
+
+1. **HTTP 报文在 TCP 网线上的物理顺序是严格固定的**：
+   ```
+   HTTP/1.1 200 OK\r\n                        <── 1. 状态行（Status Line，只能发一次！）
+   Content-Type: text/event-stream\r\n        <── 2. 响应头（Headers）
+   Transfer-Encoding: chunked\r\n
+   \r\n                                       <── 3. 空行（代表 Header 彻底结束，进入 Body 阶段！）
+   data: {"choices":[{"delta":{"content":"你好"}}]}\n\n   <── 4. 响应体（Body Chunks）
+   ```
+2. **首字前失败（`RequestState.NOT_STARTED`）—— 还没发空行，可以随时悔改**：
+   * 在 `gateway/app.py` 中，我们通过 `first_chunk = await anext(chunk_iter)` **在构造 `StreamingResponse` 之前先预取第 1 个 Token Chunk**。
+   * 若后端在 Prefill 阶段超时或崩溃（还没吐出第 1 个字），Gateway 此时**尚未向客户端发送 `HTTP/1.1 200 OK` 状态行**！因此 Gateway 可以名正言顺地改发 `HTTP/1.1 502 Bad Gateway` 或 `504 Gateway Timeout` + 标准错误 JSON。
+3. **流中途失败（`RequestState.STREAMING`）—— 覆水难收，严禁二次发送状态头**：
+   * 一旦第 1 个字吐出，ASGI 协议的 `http.response.start` 事件（携带 `status=200`）已经刷入操作系统网卡缓冲区发给了客户端。
+   * 如果吐到第 50 个字时后端 vLLM 进程突然崩溃（抛出 `httpx.ReadError`）：
+     * **在协议层**：TCP 流已经处于第 4 阶段（Chunked Body 传输中），你**绝对不可能时光倒流去撤回客户端已经收到的 `HTTP/1.1 200 OK`**；如果强行在 ASGI 中再次调用 `http.response.start` 或抛出未捕获异常，Uvicorn/Starlette 会直接报 `RuntimeError: Expected ASGI message 'http.response.body', but got 'http.response.start'` 并粗暴断开 TCP 连接，导致客户端报 `ChunkedEncodingError / IncompleteRead`。
+     * **工业级正确处理**：保持 HTTP 200 流不断，在生成器 `except` 块中向 SSE 流内注入一条**带内错误事件帧（In-band SSE Error Event）**：
+       ```
+       data: {"error": {"message": "Upstream stream interrupted...", "type": "mid_stream_error", "request_id": "..."}}\n\n
+       data: [DONE]\n\n
+       ```
+       随后在 `finally:` 中调用 `await upstream_resp.aclose()` 优雅闭合流。
+
+---
+
+#### 💡 核心解析二：M1 Step 1 五大强制失败测试与零泄漏实测证据链
+
+测试代码位于 `tests/test_gateway_step1.py`，实测结果已自动持久化至 `results/gateway/step1_failure_tests.json`：
+
+| 失败测试场景 | 对应测试函数 | 核心验证指标与实测结果 (`step1_failure_tests.json`) | 是否有资源/连接泄漏？ |
+| :--- | :--- | :--- | :---: |
+| **1. 首字前失败**<br>*(Backend 在吐第 1 个字前超时或崩溃)* | `test_3_pre_first_token_failure_returns_http_error_json` | • TTFT 超时返回标准 `HTTP 504` JSON<br>• 首字前流崩溃返回标准 `HTTP 502` JSON<br>• `upstream_stream_closed: true` | **零泄漏**<br>(`active_requests = 0`) |
+| **2. 流中途失败**<br>*(已发 HTTP 200 头，吐完 2 个字后崩溃)* | `test_4_mid_stream_failure_after_headers_sent` | • 状态码保持 `200`<br>• 成功注入 `mid_stream_error` SSE 帧与 `[DONE]`<br>• `upstream_stream_closed: true` | **零泄漏**<br>(`active_requests = 0`) |
+| **3. 客户端主动断连**<br>*(后端计划吐 100 字，客户端收 2 字后断连)* | `test_5_client_disconnect_cancels_and_closes_upstream` | • 客户端在收到 `2` 个 chunk 后发送 `http.disconnect`<br>• 后端实际仅生成 **`2` 个 Token** 即被 `aclose()` 掐断（节省 98% 无效算力！）<br>• `upstream_stream_closed: true` | **零泄漏**<br>(`active_requests = 0`) |
+| **4. 慢客户端读取**<br>*(客户端每 chunk 延迟 15ms 慢速消费)* | `test_6_slow_client_reading_and_high_concurrency_no_leak` | • 逐块按需拉取，无网关内存暴涨<br>• 读取完毕后 `all_upstream_streams_closed: true` | **零泄漏**<br>(`active_requests = 0`) |
+| **5. 多请求高并发**<br>*(25 路并发流式请求混合快慢客户端)* | `test_6_slow_client_reading_and_high_concurrency_no_leak` | • 25 条上游流 `100%` 执行 `aclose()` 归还连接池<br>• 压测结束后 `leaked_active_requests: 0` | **零泄漏**<br>(`active_requests = 0`) |
+
 
 
 

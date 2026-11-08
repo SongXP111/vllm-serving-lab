@@ -1,0 +1,22 @@
+{
+  "backend_url": "http://localhost:8000",
+  "served_model": "qwen2.5-7b-instruct-fp8",
+  "non_streaming": {
+    "status_code": 200,
+    "e2e_ms": 366.64,
+    "reply_preview": "Hi there!"
+  },
+  "streaming_integrity": {
+    "total_sse_frames": 34,
+    "done_marker_received": true,
+    "ttft_ms": 59.22,
+    "reconstructed_text": "Sure! Here is the count from 1 to 10:\n\n1, 2, 3, 4, 5, 6, "
+  },
+  "real_vllm_disconnect_cleanup": {
+    "planned_max_tokens": 300,
+    "client_disconnected_after_chunks": 3,
+    "vllm_num_requests_running_after_abort": 0.0,
+    "cleanup_verified_within_ms": 164.94,
+    "leaked_active_requests": 0
+  }
+}

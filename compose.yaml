@@ -23,6 +23,7 @@ services:
     volumes:
       - ~/.cache/huggingface:/root/.cache/huggingface
       - ./results:/results
+    # Note on --swap-space: CPU swap space was for legacy vLLM V0 engine; vLLM V1 (v0.25.1+) removed --swap-space in favor of RECOMPUTE & tiered offload
     command: >
       --model ${VLLM_MODEL:-RedHatAI/Qwen2.5-7B-Instruct-FP8-dynamic}
       --served-model-name ${VLLM_SERVED_MODEL:-qwen2.5-7b-instruct-fp8}
@@ -36,8 +37,6 @@ services:
       --scheduling-policy ${SCHEDULING_POLICY:-fcfs}
       ${SPECULATIVE_CONFIG:+--speculative-config ${SPECULATIVE_CONFIG}}
       ${ENFORCE_EAGER_FLAG:-}
-      # CPU swap space for vLLM V0 engine (note: vLLM V1 removed reactive preemption swapping in favor of RECOMPUTE & tiered offload)
-      --swap-space ${SWAP_SPACE_GB:-4}
       ${CPU_OFFLOAD_GB:+--cpu-offload-gb ${CPU_OFFLOAD_GB}}
       ${VLLM_API_KEY:+--api-key ${VLLM_API_KEY}}
       --generation-config vllm

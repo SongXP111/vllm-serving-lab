@@ -115,7 +115,8 @@ bash scripts/run_all_benchmarks.sh --all
 > 4. 深入理解计算与显存带宽受限、指标定义及工程冲突：👉 **[《大模型推理核心机制：Prefill 与 Decode 性能指标深度分析与实测报告》](docs/prefill_vs_decode_analysis.md)** 👈  
 > 5. 查看各项优化技术真实实测对比数据与选型决策：👉 **[《核心优化技术实验实测对比报告与选型决策树》](docs/optimization_benchmarks_report.md)** 👈  
 > 6. 深入理解优化底层物理机制与吞吐量-尾延迟博弈：👉 **[《大模型推理优化底层原理与吞吐量-尾延迟权衡指南》](docs/optimization_principles_and_tradeoffs.md)** 👈  
-> 7. 高频思考与工业级深度问答：👉 **[《大模型推理与 AI Infra 核心问题与深度问答集》](qa_collection.md)** 👈
+> 7. 异步流式网关、请求生命周期与准入控制实测（M1）：👉 **[《大模型服务网关设计与实测报告 (M1: Async Streaming Gateway & Admission Control)》](docs/gateway.md)** 👈  
+> 8. 高频思考与工业级深度问答：👉 **[《大模型推理与 AI Infra 核心问题与深度问答集》](qa_collection.md)** 👈
 
 ### 🧪 实验矩阵明细
 
