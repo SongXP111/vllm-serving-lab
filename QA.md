@@ -12,6 +12,7 @@
 - [Q4: 在 PD 分离架构中，跨机传输 KV Cache 难道不费时间和带宽吗？如果 Decode 显存满了接不住怎么办？普通机房如何选型？](#q4-在-pd-分离架构中跨机传输-kv-cache-难道不费时间和带宽吗如果-decode-显存满了接不住怎么办普通机房如何选型)
 - [Q5: 既然 vLLM 自带了 HTTP API Server，为什么生产环境必须先挡一层自己的 Gateway？为什么 M1 第一步规定“先只连 1 台 vLLM，不做智能路由”？](#q5-既然-vllm-自带了-http-api-server为什么生产环境必须先挡一层自己的-gateway为什么-m1-第一步规定先只连-1-台-vllm不做智能路由)
 - [Q6: 在流式推理（SSE）中，已经发出 HTTP Headers 后为什么不能再随意返回另一份 JSON 错误？M1 Step 1 的五大失败测试如何证明零资源泄漏？](#q6-在流式推理sse中已经发出-http-headers-后为什么不能再随意返回另一份-json-错误m1-step-1-的五大失败测试如何证明零资源泄漏)
+- [Q7: 为什么必须在 Gateway 层决定「接受、排队还是拒绝」后 Router 才有可用的负载状态？llm-d EPP 的 Flow Control 四大核心概念（Saturation / Flow / Priority / Fairness）是什么？](#q7-为什么必须在-gateway-层决定接受排队还是拒绝后-router-才有可用的负载状态llm-d-epp-的-flow-control-四大核心概念saturation--flow--priority--fairness是什么)
 
 ---
 
@@ -365,6 +366,69 @@ vLLM 自带的 `--api-key` 仅能校验单一静态密码，无法实现租户�
 | **3. 客户端主动断连**<br>*(后端计划吐 100 字，客户端收 2 字后断连)* | `test_5_client_disconnect_cancels_and_closes_upstream` | • 客户端在收到 `2` 个 chunk 后发送 `http.disconnect`<br>• 后端实际仅生成 **`2` 个 Token** 即被 `aclose()` 掐断（节省 98% 无效算力！）<br>• `upstream_stream_closed: true` | **零泄漏**<br>(`active_requests = 0`) |
 | **4. 慢客户端读取**<br>*(客户端每 chunk 延迟 15ms 慢速消费)* | `test_6_slow_client_reading_and_high_concurrency_no_leak` | • 逐块按需拉取，无网关内存暴涨<br>• 读取完毕后 `all_upstream_streams_closed: true` | **零泄漏**<br>(`active_requests = 0`) |
 | **5. 多请求高并发**<br>*(25 路并发流式请求混合快慢客户端)* | `test_6_slow_client_reading_and_high_concurrency_no_leak` | • 25 条上游流 `100%` 执行 `aclose()` 归还连接池<br>• 压测结束后 `leaked_active_requests: 0` | **零泄漏**<br>(`active_requests = 0`) |
+
+---
+
+### Q7: 为什么必须在 Gateway 层决定「接受、排队还是拒绝」后 Router 才有可用的负载状态？llm-d EPP 的 Flow Control 四大核心概念（Saturation / Flow / Priority / Fairness）是什么？
+
+#### ❓ 问题背景
+在进入 **M1 Step 2（准入控制、有界队列、公平性与过载反压）** 时，学习计划提出两条核心指引：
+1. **为什么现在学**：*“当到达请求超过 backend 能处理的并发能力时，单有 Gateway 只会无限等待或超时；必须先决定「接受、排队还是拒绝」，Router 才有可用的负载状态。”*
+2. **去哪学**：*“先复用 Step 1 的 asyncio/HTTPX 超时与测试；参考 [llm-d EPP](https://llm-d.ai/docs/dev/architecture/core/router/epp/) 的 Flow Control 概念（`flow`、`priority`、`fairness`、`saturation`），只读设计思想，不复制它的整个框架。”*
+
+为什么不能把请求一股脑全部直接塞进 vLLM 自己的队列里？为什么不做网关层准入控制，后面的多节点 Router（M2）就会失效？
+
+---
+
+#### 💡 核心解析一：为什么不能把请求全塞给 vLLM？什么是“调度悔恨（Scheduling Regret）”？
+
+##### 1. 单纯透传（Unbounded Forwarding）在洪峰下的雪崩
+假设单台 vLLM 显卡同时最多能无抢占流畅运行 **8 个并发请求**（`max_in_flight = 8`）。若瞬间涌入 **100 个请求**，而 Gateway 不做拦截直接透传：
+* **有效吞吐（Goodput）归零**：92 个请求在 vLLM 内部等待队列里积压数十秒。当排到第 80 个请求时，客户端早已触发超时断开；若未及时在网关层排队阶段将其剔除，GPU 仍会为已超时的死请求耗费算力。
+* **队头阻塞（Head-of-Line Blocking）**：第 100 个高优在线实时对话请求，被迫排在 99 个离线长文批处理请求后面等待。
+
+##### 2. 为什么说“必须先在网关决定接受、排队还是拒绝，Router 才有可用的负载状态”？
+在分布式推理架构（如 [llm-d EPP](https://llm-d.ai/docs/dev/architecture/core/router/epp/)）中，把未获得执行槽位的请求过早发往某个具体 Backend 实例，会导致严重的 **“调度悔恨（Scheduling Regret / 过早绑定）”**：
+
+```text
+❌ 过早绑定（不在网关排队，直接发往后端）：
+Client (100 reqs) ──► Router ──┬──► vLLM-A (瞬间塞入 50 个，全锁死在 A 的本地队列里)
+                               └──► vLLM-B (瞬间塞入 50 个，全锁死在 B 的本地队列里)
+```
+* **灾难推演**：
+  * 假设第 0 毫秒时，Router 把 50 个请求发给了 `vLLM-A`，50 个发给了 `vLLM-B`。
+  * 结果 `vLLM-A` 碰巧遇到 5 个 32K 超长上下文请求，需要算 60 秒；而 `vLLM-B` 全是短对话，2 秒钟就把 50 个请求全部算完，**从第 3 秒起 `vLLM-B` 彻底空闲**！
+  * 然而，那 45 个已经发往 `vLLM-A` 本地队列的请求**已经被死死锁在 `vLLM-A` 进程里，无法改派到空闲的 `vLLM-B`**！
+* **正确解法（延迟绑定 Late Binding + 网关层准入控制）**：
+  * **接受（Accept）**：网关严格控制每台 vLLM 的在途并发上限 `in_flight <= max_in_flight`；未饱和时直接放行（0 排队延迟）。
+  * **排队（Queue in Gateway）**：当所有后端实例均已达到 `max_in_flight` 饱和水位时，多出来的请求**暂存在网关自己的有界内存队列（Bounded Queue）中**，暂不绑定死某台后端。一旦 `vLLM-B` 率先释放出 1 个槽位，网关立即从队头取出最高优请求派发给 `vLLM-B`！
+  * **拒绝（Reject / Shedding）**：当租户超配额时当场返回 `429 Too Many Requests`；当网关有界队列已满或排队等待超时时，当场返回 `503 Service Unavailable`，保护后端引擎不发生级联 OOM 雪崩。
+  * **结论**：只有网关把每台 Backend 的并发水位严格控制在 `max_in_flight` 以内，每台节点的负载状态才是干净、真实、可度量的，后续 M2 的智能 Router 才能在“真正有槽位空出的一瞬间”做出最优路由决策。
+
+---
+
+#### 💡 核心解析二：llm-d EPP 的 Flow Control 四大核心概念拆解
+
+**llm-d**（Kubernetes 原生分布式推理栈）中的 **EPP（Endpoint Picker）** 将网关流控抽象为以下四个正交维度：
+
+| 核心概念 | 解决的核心痛点 | 运行机制与工程语义 |
+| :--- | :--- | :--- |
+| **1. `Saturation`<br>（饱和度检测）** | 平时闲着的时候为什么要排队白加延迟？ | **Work-Conserving（有空即走）**：当后端 `in_flight < max_in_flight` 时，流控器完全旁路，请求 0 延迟直通后端；**仅当 `in_flight == max_in_flight`（进入饱和态）时**，才激活网关内存队列。 |
+| **2. `Flow`<br>（逻辑流分类）** | 所有请求混作一团，分不清是谁发的、急不急 | 为每个进入网关的请求打上身份标签 **`FlowKey = (Tenant_ID, Priority)`**（例如通过请求头 `X-Tenant-ID` 与 `X-Priority`），将匿名洪流切分为可独立计量与调度的逻辑流。 |
+| **3. `Priority`<br>（优先级分档）** | 离线跑批任务把在线 VIP 用户的交互卡死 | **严格优先级分档（Priority Bands，如 `high` > `normal` > `low`）**：<br>• **出队顺序**：后端释放槽位时，严格先清空高优分档，再处理低优分档。<br>• **过载丢弃（Shedding）**：队列接近满载时，优先拒绝低优先级请求返回 `503`。 |
+| **4. `Fairness`<br>（同级租户公平性）** | **防“吵闹邻居（Noisy Neighbor）”**：同一优先级下，租户 A 狂发 100 个请求，把只发 1 个请求的租户 B 堵死 | **同级内按租户轮转（Per-Flow Round-Robin / WFQ）**：<br>• 在同一个 Priority 分档内，每个租户维护独立子队列 `Queue[tenant_id]`。<br>• 每次释放槽位时，在有积压请求的租户之间 **Round-Robin 轮流取 1 个请求**（先放 A 的第 1 个 → 紧接着放 B 的第 1 个 → 再放 A 的第 2 个），彻底消除单租户霸占队列。 |
+
+---
+
+#### 💡 核心解析三：为什么“只读设计思想，不复制它的整个框架”？
+
+* **原版框架的复杂度**：`llm-d EPP` 是用 Go 编写的 Kubernetes 重型组件，深度耦合了 Envoy `ext_proc` gRPC 流协议与 K8s CRD 控制器，代码量达上万行。
+* **我们在 Python Gateway 中的精炼落地（< 200 行原生 `asyncio`）**：
+  我们只需提取上述四大思想，在 `gateway/` 中实现一个轻量内聚的 **`AdmissionController`**：
+  1. **租户配额（Tenant Quota）**：限制单租户最大并发/速率，超限立即返回 **`429 Too Many Requests`**。
+  2. **饱和与有界队列（Saturation & Bounded Queue）**：跟踪 `in_flight` 与 `max_in_flight`；饱和时进入有界队列（上限 `max_queue_size`），队列满或等待超过 `queue_timeout` 立即返回 **`503 Service Unavailable`**。
+  3. **Priority + Per-Tenant Round-Robin 调度器**：按优先级分桶，同优先级内按 `tenant_id` 循环轮转唤醒等待中的 `asyncio.Future`；若客户端在排队等待期间主动断连，立即从队列中移除该条目，绝不浪费后续释放的后端槽位。
+
 
 
 
