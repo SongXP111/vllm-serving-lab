@@ -27,6 +27,7 @@ import httpx
 import pytest
 
 from gateway.app import create_gateway_app
+from gateway.config import GatewayConfig
 from gateway.models import RequestState
 
 EVIDENCE_RESULTS: Dict[str, Any] = {}
@@ -385,7 +386,10 @@ async def test_6_slow_client_reading_and_high_concurrency_no_leak():
             stream=stream,
         )
 
-    app = create_gateway_app(transport=httpx.MockTransport(handler))
+    app = create_gateway_app(
+        config=GatewayConfig(max_inflight=32, queue_capacity=32),
+        transport=httpx.MockTransport(handler),
+    )
     async with app.router.lifespan_context(app):
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=app), base_url="http://gateway"

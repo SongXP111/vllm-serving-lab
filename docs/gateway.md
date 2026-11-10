@@ -1,9 +1,9 @@
 # 🌐 大模型服务网关设计与实测报告 (M1: Async Streaming Gateway & Admission Control)
 
 > **对应里程碑**：Milestone 1 (M1) — 请求生命周期控制、异步流式透传、异常故障语义与准入过载保护  
-> **核心代码目录**：[`gateway/`](../gateway/)（[`app.py`](../gateway/app.py)、[`config.py`](../gateway/config.py)、[`models.py`](../gateway/models.py)）  
-> **验证测试套件**：[`tests/test_gateway_step1.py`](../tests/test_gateway_step1.py)（故障注入与契约测试）、[`tests/test_gateway_real_vllm.py`](../tests/test_gateway_real_vllm.py)（真机 vLLM 端到端集成测试）  
-> **实测落盘数据**：[`results/gateway/step1_failure_tests.json`](../results/gateway/step1_failure_tests.json)、[`results/gateway/step1_real_vllm_integration.json`](../results/gateway/step1_real_vllm_integration.json)
+> **核心代码目录**：[`gateway/`](../gateway/)（[`app.py`](../gateway/app.py)、[`admission.py`](../gateway/admission.py)、[`config.py`](../gateway/config.py)、[`models.py`](../gateway/models.py)）  
+> **验证测试套件**：[`tests/test_gateway_step1.py`](../tests/test_gateway_step1.py)（Step 1 故障注入）、[`tests/test_gateway_real_vllm.py`](../tests/test_gateway_real_vllm.py)（真机 vLLM 端到端集成测试）、[`tests/test_gateway_step2.py`](../tests/test_gateway_step2.py)（Step 2 准入控制与公平性队列测试）  
+> **实测落盘数据**：[`results/gateway/step1_failure_tests.json`](../results/gateway/step1_failure_tests.json)、[`results/gateway/step1_real_vllm_integration.json`](../results/gateway/step1_real_vllm_integration.json)、[`results/gateway/step2_admission_tests.json`](../results/gateway/step2_admission_tests.json)
 
 ---
 
@@ -16,7 +16,11 @@
    - [2.3 为什么发出 HTTP 200 Headers 后不能再改回 502 JSON？（首包预取设计）](#23-为什么发出-http-200-headers-后不能再改回-502-json首包预取设计)
    - [2.4 故障注入与边界测试实测报告 (`step1_failure_tests.json`)](#24-故障注入与边界测试实测报告-step1_failure_testsjson)
    - [2.5 真机 vLLM 端到端与断连回收实测报告 (`step1_real_vllm_integration.json`)](#25-真机-vllm-端到端与断连回收实测报告-step1_real_vllm_integrationjson)
-3. [M1 Step 2：准入控制（Admission Control）、有界队列与过载反压（待更新）](#3-m1-step-2准入控制admission-control有界队列与过载反压待更新)
+3. [M1 Step 2：准入控制（Admission Control）、有界队列与过载反压](#3-m1-step-2准入控制admission-control有界队列与过载反压)
+   - [3.1 核心设计思想（参考 llm-d EPP Flow Control 四大支柱）](#31-核心设计思想参考-llm-d-epp-flow-control-四大支柱)
+   - [3.2 状态码反压语义严格分离（`429` vs `503` vs `504`）](#32-状态码反压语义严格分离429-vs-503-vs-504)
+   - [3.3 优先级防饥饿与多租户 Round-Robin 公平调度算法](#33-优先级防饥饿与多租户-round-robin-公平调度算法)
+   - [3.4 M1 Step 2 自动化压测与边界实测报告 (`step2_admission_tests.json`)](#34-m1-step-2-自动化压测与边界实测报告-step2_admission_testsjson)
 
 ---
 
@@ -124,11 +128,71 @@ python -m pytest tests/test_gateway_real_vllm.py -v
 
 ---
 
-## 3. M1 Step 2：准入控制（Admission Control）、有界队列与过载反压（待更新）
+## 3. M1 Step 2：准入控制（Admission Control）、有界队列与过载反压
 
-> 📌 **下一阶段演进计划（M1 Step 2）**：  
-> 在 Step 1 稳定掌控单请求生命周期的基础上，Step 2 将引入网关层的系统级保护机制：
-> 1. **并发准入控制（Max In-Flight Concurrency）与有界等待队列（Bounded Queue）**
-> 2. **租户级配额与速率限制（Tenant Quota / Token Bucket Rate Limiting）**
-> 3. **多租户/长短请求公平性调度（Fairness & Anti-Starvation）**
-> 4. **明确的过载反压语义（`429 Too Many Requests` 配额限流 vs `503 Service Unavailable` 系统队列满/后端过载 + `Retry-After`）**
+### 3.1 核心设计思想（参考 llm-d EPP Flow Control 四大支柱）
+
+当外部到达流量超过后端 vLLM 的并发能力时，如果网关直接将所有请求透传进后端，会导致后端内部队列无限膨胀、高优请求队头阻塞，且在多实例路由（M2）下引发 **“调度悔恨（Scheduling Regret / 过早绑定）”**。
+
+因此在 [`gateway/admission.py`](../gateway/admission.py) 中，我们实现了 [`AdmissionController`](../gateway/admission.py#L103-L459)，落地了 `llm-d EPP` 的四大核心流控机制：
+
+1. **饱和检测与 Work-Conserving 直通（Saturation）**：
+   - 默认配置 `max_inflight = 4`，`queue_capacity = 20`。
+   - 当 `in_flight < max_inflight` 且队列为空时，请求 **0 排队延迟**直接获得执行槽位发往后端；仅当 `in_flight == max_inflight` 进入饱和态时才激活网关有界队列。
+2. **逻辑流分类（Flow Classification）**：
+   - 提取请求头 `X-Tenant-ID`（或请求体 `tenant_id`/`user`）与 `X-Priority`（`high` / `normal` / `low`），构建 `FlowKey = (tenant_id, priority)`。
+3. **两级公平调度与防饥饿（Priority + Per-Tenant Fairness + Anti-Starvation）**：
+   - **同优先级内（Per-Tenant Round-Robin）**：每个优先级分档内按租户维护独立 FIFO 子队列与轮转环（`tenant_rr_order`），每次出队在有积压的租户间交替轮转，彻底防止“吵闹邻居（Noisy Neighbor）”饿死其他租户。
+   - **跨优先级间（Consecutive Cap + Aging 防永久饥饿）**：默认优先调度 `high`；但通过 `max_consecutive_high_priority = 3` 与 `starvation_aging_seconds` 保底：当连续放行 3 个 `high` 请求且低优队列非空时，**强制将第 4 个槽位让给等待中的 `normal` / `low` 请求**，从数学上保证低优先级请求绝不永久饥饿。
+4. **排队与执行双态取消/超时清理（Direct Slot Handoff）**：
+   - 排队期间实时监听 `request.is_disconnected()` 与 `queue_timeout` / `deadline`；一旦客户端在排队期间断开连接，立即从有界队列中摘除该节点，绝不浪费后续释放的后端槽位。
+   - 当执行态请求完成、超时或断连时，在 `finally` 中幂等调用 `admission.release_slot(ctx)`，采用**槽位直接移交（Direct Handoff）**机制唤醒下一个排队请求，防止新到达请求插队（Barging）。
+
+---
+
+### 3.2 状态码反压语义严格分离（`429` vs `503` vs `504`）
+
+| HTTP 状态码 | 错误类型 (`error.type`) | 触发条件与物理含义 | 响应头契约 |
+| :---: | :--- | :--- | :--- |
+| **`429 Too Many Requests`** | `rate_limit_exceeded` / `tenant_quota_exceeded` | **单租户违规**：该租户超过 Token Bucket 速率上限（`tenant_rate_limit_rps`）或单租户最大并发配额（`tenant_max_concurrency`），此时系统全局可能仍有空闲，不影响其他正常租户。 | `X-Request-ID`, `Retry-After` |
+| **`503 Service Unavailable`** | `server_overloaded_queue_full` / `queue_timeout_exceeded` | **系统级过载反压**：后端 `in_flight == max_inflight` 已满，且网关有界队列已达上限（`queued == queue_capacity`），或请求在网关队列中等待超过 `queue_timeout`。 | `X-Request-ID`, `Retry-After` |
+| **`504 Gateway Timeout`** | `deadline_exceeded` / `gateway_timeout` | **全链路截止时间或后端超时**：请求携带的 `X-Request-Deadline-Seconds` 在排队或执行阶段耗尽，或后端 vLLM 首字/生成超时。 | `X-Request-ID` |
+
+---
+
+### 3.3 优先级防饥饿与多租户 Round-Robin 公平调度算法
+
+```mermaid
+flowchart TD
+    SlotFree["后端释放 1 个 in_flight 槽位<br/>release_slot(ctx)"] --> HasWait{"队列是否非空？"}
+    HasWait -- "全空" --> Dec["in_flight -= 1"]
+    HasWait -- "非空" --> AgeCheck{"1. 老化检查 (Aging)<br/>LOW/NORMAL 等待 >= aging_threshold?"}
+    AgeCheck -- "是" --> PickAged["选中已老化的低优分档<br/>重置 consecutive_high = 0"]
+    AgeCheck -- "否" --> CapCheck{"2. 连续高优上限检查<br/>consecutive_high < max_consecutive_high (3)?"}
+    CapCheck -- "是 (且 HIGH 非空)" --> PickHigh["选中 HIGH 分档<br/>consecutive_high += 1"]
+    CapCheck -- "否 (已连放 3 个 HIGH)" --> PickLow["强制让出 1 次机会给 NORMAL/LOW<br/>重置 consecutive_high = 0"]
+    PickAged --> TenantRR["3. 同分档内按租户 Round-Robin 轮转<br/>tenant_id = tenant_rr_order.popleft()"]
+    PickHigh --> TenantRR
+    PickLow --> TenantRR
+    TenantRR --> Handoff["直接移交槽位并唤醒请求<br/>entry.granted = True; entry.event.set()"]
+```
+
+---
+
+### 3.4 M1 Step 2 自动化压测与边界实测报告 (`step2_admission_tests.json`)
+
+通过 [`tests/test_gateway_step2.py`](../tests/test_gateway_step2.py) 对照学习计划中的 5 大硬性验收场景进行测试：
+
+```bash
+python -m pytest tests/test_gateway_step1.py tests/test_gateway_step2.py -v
+```
+
+**实测结果汇总（`11 passed in 2.00s`，完整落盘数据见 [`results/gateway/step2_admission_tests.json`](../results/gateway/step2_admission_tests.json)）**：
+
+| 测试编号与验收场景 | 设定参数 (`max_inflight=4, queue_capacity=20`) | 实测核心数据与证据 (`step2_admission_tests.json`) | 结论 |
+| :--- | :--- | :--- | :---: |
+| **1. 并发突发超 24 请求 + 队列有界与恢复**<br>(`test_1_burst_over_24_bounded_queue_and_recovery`) | 瞬间并发打入 **32 个请求**，Mock Backend 固定耗时 `40ms` | • 后端最大实测并发：`max_observed_backend_inflight = 4`（严守上限 4）<br>• 队列最大实测长度：`max_observed_queue_len = 20`（严守上限 20，绝不无限增长）<br>• **24 个成功 (`200 OK`)**，**8 个溢出当场返回 `503`**<br>• 洪峰结束后 `in_flight=0, queued=0`，补发恢复请求 `200 OK` (`queue_wait_ms=0.0`) | ✅ PASS |
+| **2. 租户配额/速率限制 (`429`) + 多租户争抢公平性**<br>(`test_2_tenant_quota_rate_limit_429_and_fairness`) | • 租户配额 `2` / 速率桶突发 `2`<br>• `tenant-noisy` 狂塞 6 个排队后，`tenant-quiet` 发 2 个 | • 单租户超限精准返回 **`429`**，同时其他租户返回 **`200`**<br>• 排队出队序列实测为：`["tenant-noisy", "tenant-quiet", "tenant-noisy", "tenant-quiet", ...]`，安静租户无需排在吵闹租户 6 个请求之后 | ✅ PASS |
+| **3. 高优持续涌入 + 低优防永久饥饿**<br>(`test_3_continuous_high_priority_flood_no_low_priority_starvation`) | 先入队 **3 个 `low`**，随后持续涌入 **9 个 `high`**（配置 `max_consecutive_high=3`） | • 实测 12 个排队请求的出队顺序：<br>`["high", "high", "high", "low", "high", "high", "high", "low", "high", "high", "high", "low"]`<br>• 高优成功插队享受 3:1 带宽，同时每 3 个 `high` 后必保底放行 1 个 `low`，**`low_priority_starved_count = 0`** | ✅ PASS |
+| **4. 客户端在排队期间主动取消**<br>(`test_4_client_cancel_in_queue_evicts_cleanly_and_preserves_slots`) | 4 个请求占满槽位，第 5 个请求 (`req-cancel-in-queue`) 排队中途断开，第 6 个 (`req-survivor`) 排在后面 | • `cancelled_in_queue_count = 1`<br>• `cancelled_request_sent_to_backend = false`（绝不白送后端浪费算力）<br>• 槽位释放时直接唤醒第 6 个请求 `req-survivor` (`200 OK`)，最终 `in_flight=0, queued=0` | ✅ PASS |
+| **5. 排队超时 (`503`)、全链路 Deadline (`504`) 与后台超时回收**<br>(`test_5_queue_timeout_deadline_and_backend_timeout_slot_recovery`) | `queue_timeout=40ms`，请求级 `X-Request-Deadline-Seconds: 0.02 / 0.04` | • 排队等槽位超时返回 **`503`** (`queue_timeout_exceeded`)<br>• 全链路 Deadline 在排队或执行态耗尽返回 **`504`** (`deadline_exceeded` / `gateway_timeout`)<br>• 超时后槽位 `100%` 回收 (`in_flight=0, queued=0`)，后续 4 个并发请求全部 `200 OK` | ✅ PASS |

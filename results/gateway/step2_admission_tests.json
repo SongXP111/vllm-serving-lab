@@ -1,0 +1,67 @@
+{
+  "burst_over_24_and_recovery": {
+    "burst_requests_sent": 32,
+    "configured_max_inflight": 4,
+    "configured_queue_capacity": 20,
+    "max_observed_backend_inflight": 4,
+    "max_observed_queue_len": 20,
+    "succeeded_200_count": 24,
+    "rejected_503_queue_full_count": 8,
+    "in_flight_after_burst": 0,
+    "queued_after_burst": 0,
+    "post_burst_recovery_status": 200
+  },
+  "tenant_quota_rate_limit_and_fairness": {
+    "quota_test_tenant_a_200": 2,
+    "quota_test_tenant_a_429": 2,
+    "quota_test_tenant_b_200": 1,
+    "rate_limit_test_200": 2,
+    "rate_limit_test_429": 2,
+    "fairness_queued_dispatch_sequence": [
+      "tenant-noisy",
+      "tenant-quiet",
+      "tenant-noisy",
+      "tenant-quiet",
+      "tenant-noisy",
+      "tenant-noisy",
+      "tenant-noisy",
+      "tenant-noisy"
+    ]
+  },
+  "priority_and_anti_starvation": {
+    "queued_low_requests": 3,
+    "queued_high_requests": 9,
+    "max_consecutive_high_cap": 3,
+    "observed_queued_dispatch_priorities": [
+      "high",
+      "high",
+      "high",
+      "low",
+      "high",
+      "high",
+      "high",
+      "low",
+      "high",
+      "high",
+      "high",
+      "low"
+    ],
+    "low_priority_starved_count": 0
+  },
+  "cancel_in_queue": {
+    "cancelled_in_queue_count": 1,
+    "cancelled_request_sent_to_backend": false,
+    "survivor_request_status": 200,
+    "final_in_flight": 0,
+    "final_queued": 0,
+    "leaked_active_requests": 0
+  },
+  "timeouts_and_slot_recovery": {
+    "queue_timeout_status": 503,
+    "queue_deadline_status": 504,
+    "inflight_deadline_status": 504,
+    "post_timeout_in_flight": 0,
+    "post_timeout_queued": 0,
+    "recovery_4_requests_all_200": true
+  }
+}
