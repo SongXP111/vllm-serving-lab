@@ -147,6 +147,45 @@ def create_gateway_app(
         admission: AdmissionController = request.app.state.admission
         return admission.snapshot()
 
+    @app.get("/metrics")
+    async def prometheus_metrics(request: Request) -> Response:
+        admission: AdmissionController = request.app.state.admission
+        snap = admission.snapshot()
+        m = snap["metrics"]
+        lines = [
+            "# HELP gateway_in_flight Current number of requests executing on backend.",
+            "# TYPE gateway_in_flight gauge",
+            f"gateway_in_flight {snap['in_flight']}",
+            "# HELP gateway_queue_depth Current number of requests waiting in Gateway queue.",
+            "# TYPE gateway_queue_depth gauge",
+            f"gateway_queue_depth {m['queue_depth']['current']}",
+            "# HELP gateway_queue_depth_max_observed Peak observed Gateway queue depth.",
+            "# TYPE gateway_queue_depth_max_observed gauge",
+            f"gateway_queue_depth_max_observed {m['queue_depth']['max_observed']}",
+            "# HELP gateway_queue_wait_avg_ms Average queue wait time in ms for queued requests.",
+            "# TYPE gateway_queue_wait_avg_ms gauge",
+            f"gateway_queue_wait_avg_ms {m['queue_wait']['avg_queued_wait_ms']}",
+            "# HELP gateway_queue_wait_max_ms Max observed queue wait time in ms.",
+            "# TYPE gateway_queue_wait_max_ms gauge",
+            f"gateway_queue_wait_max_ms {m['queue_wait']['max_wait_ms']}",
+            "# HELP gateway_reject_total Total rejected requests before entering inference.",
+            "# TYPE gateway_reject_total counter",
+            f'gateway_reject_total{{reason="invalid_400"}} {m["reject"]["invalid_400"]}',
+            f'gateway_reject_total{{reason="quota_429"}} {m["reject"]["quota_429"]}',
+            f'gateway_reject_total{{reason="rate_limit_429"}} {m["reject"]["rate_limit_429"]}',
+            f'gateway_reject_total{{reason="queue_full_503"}} {m["reject"]["queue_full_503"]}',
+            f'gateway_reject_total{{reason="queue_timeout_503"}} {m["reject"]["queue_timeout_503"]}',
+            f'gateway_reject_total{{reason="deadline_504"}} {m["reject"]["deadline_504"]}',
+            "# HELP gateway_cancel_total Total cancelled requests by lifecycle stage.",
+            "# TYPE gateway_cancel_total counter",
+            f'gateway_cancel_total{{stage="in_queue"}} {m["cancel"]["in_queue"]}',
+            f'gateway_cancel_total{{stage="in_flight"}} {m["cancel"]["in_flight"]}',
+        ]
+        return Response(
+            content="\n".join(lines) + "\n",
+            media_type="text/plain; version=0.0.4",
+        )
+
     @app.get("/v1/models")
     async def list_models(request: Request) -> Response:
         request_id = request.headers.get("X-Request-ID") or f"req-{uuid.uuid4().hex[:12]}"
@@ -173,13 +212,30 @@ def create_gateway_app(
     @app.post("/v1/chat/completions")
     async def chat_completions(request: Request) -> Response:
         request_id = request.headers.get("X-Request-ID") or f"req-{uuid.uuid4().hex[:12]}"
+        admission: AdmissionController = request.app.state.admission
 
-        # Parse JSON body while still in NOT_STARTED state
+        # Parse and validate JSON body while still in NOT_STARTED state
+        # Invalid requests are rejected BEFORE touching the admission queue or backend!
         try:
             body = await request.json()
         except Exception as exc:
+            admission.record_invalid_request()
             return _error_json_response(
                 400, f"Invalid JSON request body: {exc}", "invalid_request_error", request_id
+            )
+
+        if (
+            not isinstance(body, dict)
+            or not body.get("model")
+            or "messages" not in body
+            or not isinstance(body.get("messages"), list)
+        ):
+            admission.record_invalid_request()
+            return _error_json_response(
+                400,
+                "Invalid request schema: 'model' (str) and 'messages' (list) are required",
+                "invalid_request_error",
+                request_id,
             )
 
         is_stream = bool(body.get("stream", False))
@@ -207,8 +263,6 @@ def create_gateway_app(
 
         request.app.state.active_requests[request_id] = ctx
         request.app.state.recent_requests[request_id] = ctx
-
-        admission: AdmissionController = request.app.state.admission
 
         # =====================================================================
         # Step 2: Admission Control (Accept / Queue / Reject 429 or 503 or 504)
@@ -298,6 +352,7 @@ def create_gateway_app(
                     request_id,
                 )
             except asyncio.CancelledError:
+                admission.record_inflight_cancel()
                 ctx.mark_finished(
                     upstream_closed=True, client_disconnected=True, error="cancelled"
                 )
@@ -391,6 +446,7 @@ def create_gateway_app(
         except asyncio.CancelledError:
             if upstream_resp is not None:
                 await upstream_resp.aclose()
+            admission.record_inflight_cancel()
             admission.release_slot(ctx)
             ctx.mark_finished(
                 upstream_closed=True,
@@ -475,6 +531,8 @@ def create_gateway_app(
                 # Phase 3 (FINISHED): Always close upstream stream AND release
                 # the in-flight admission slot so the next queued request wakes up!
                 await upstream_resp.aclose()
+                if client_left:
+                    admission.record_inflight_cancel()
                 admission.release_slot(ctx)
                 ctx.mark_finished(
                     upstream_closed=True,

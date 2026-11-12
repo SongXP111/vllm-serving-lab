@@ -655,6 +655,126 @@ async def test_5_queue_timeout_deadline_and_backend_timeout_slot_recovery():
                 ),
             }
 
+
+@pytest.mark.anyio
+async def test_6_pass_criteria_metrics_and_invalid_requests_blocked():
+    """6. Verify M1 Step 2 Pass Criteria:
+    - `queue_depth`, `queue_wait`, `reject`, and `cancel` metrics exposed on both
+      `/admin/admission` and `/metrics` (Prometheus text format).
+    - Invalid requests (400 malformed JSON, 400 missing schema fields, 504 expired
+      deadline, 429 quota exceeded) NEVER enter the downstream inference queue.
+    """
+    backend_seen_request_ids: List[str] = []
+
+    async def strict_backend(request: httpx.Request) -> httpx.Response:
+        req_id = request.headers.get("X-Request-ID", "")
+        backend_seen_request_ids.append(req_id)
+        await asyncio.sleep(0.02)
+        return httpx.Response(status_code=200, json={"id": req_id})
+
+    cfg = GatewayConfig(
+        max_inflight=4,
+        queue_capacity=20,
+        tenant_quotas={"blocked-tenant": 1},
+    )
+    app = create_gateway_app(
+        config=cfg, transport=httpx.MockTransport(strict_backend)
+    )
+
+    async with app.router.lifespan_context(app):
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://gateway"
+        ) as client:
+            # 1. Invalid JSON body -> 400
+            r_bad_json = await client.post(
+                "/v1/chat/completions",
+                headers={
+                    "X-Request-ID": "invalid-json-req",
+                    "Content-Type": "application/json",
+                },
+                content=b"{not-valid-json",
+            )
+            assert r_bad_json.status_code == 400
+
+            # 2. Missing required `messages` list -> 400
+            r_bad_schema = await client.post(
+                "/v1/chat/completions",
+                headers={"X-Request-ID": "invalid-schema-req"},
+                json={"model": "qwen"},
+            )
+            assert r_bad_schema.status_code == 400
+
+            # 3. Already-expired deadline -> 504 before queuing or backend
+            r_expired = await client.post(
+                "/v1/chat/completions",
+                headers={
+                    "X-Request-ID": "expired-deadline-req",
+                    "X-Request-Deadline-Seconds": "-0.5",
+                },
+                json={"model": "qwen", "messages": []},
+            )
+            assert r_expired.status_code == 504
+
+            # 4. Valid request + Quota-exceeded request (429)
+            r_valid, r_quota = await asyncio.gather(
+                client.post(
+                    "/v1/chat/completions",
+                    headers={
+                        "X-Request-ID": "valid-req-1",
+                        "X-Tenant-ID": "blocked-tenant",
+                    },
+                    json={"model": "qwen", "messages": []},
+                ),
+                client.post(
+                    "/v1/chat/completions",
+                    headers={
+                        "X-Request-ID": "quota-blocked-req",
+                        "X-Tenant-ID": "blocked-tenant",
+                    },
+                    json={"model": "qwen", "messages": []},
+                ),
+            )
+            assert {r_valid.status_code, r_quota.status_code} == {200, 429}
+
+            # Verify NONE of the invalid/expired/rejected requests reached backend!
+            assert len(backend_seen_request_ids) == 1
+            for invalid_id in (
+                "invalid-json-req",
+                "invalid-schema-req",
+                "expired-deadline-req",
+            ):
+                assert invalid_id not in backend_seen_request_ids
+
+            # Verify structured metrics on /admin/admission and Prometheus /metrics
+            admin_resp = await client.get("/admin/admission")
+            assert admin_resp.status_code == 200
+            metrics_obj = admin_resp.json()["metrics"]
+            assert "queue_depth" in metrics_obj
+            assert "queue_wait" in metrics_obj
+            assert "reject" in metrics_obj
+            assert "cancel" in metrics_obj
+            assert metrics_obj["reject"]["invalid_400"] == 2
+            assert metrics_obj["reject"]["deadline_504"] == 1
+            assert metrics_obj["reject"]["quota_429"] == 1
+            assert metrics_obj["reject"]["total"] == 4
+
+            prom_resp = await client.get("/metrics")
+            assert prom_resp.status_code == 200
+            prom_text = prom_resp.text
+            assert "gateway_queue_depth " in prom_text
+            assert "gateway_queue_wait_avg_ms " in prom_text
+            assert 'gateway_reject_total{reason="invalid_400"} 2' in prom_text
+            assert 'gateway_reject_total{reason="quota_429"} 1' in prom_text
+            assert 'gateway_cancel_total{stage="in_queue"}' in prom_text
+
+            STEP2_EVIDENCE["pass_criteria_metrics_and_invalid_filter"] = {
+                "invalid_and_rejected_sent_count": 4,
+                "invalid_and_rejected_entered_backend_count": 0,
+                "valid_entered_backend_count": len(backend_seen_request_ids),
+                "metrics_snapshot": metrics_obj,
+                "prometheus_endpoint_verified": True,
+            }
+
             out_dir = Path("results/gateway")
             out_dir.mkdir(parents=True, exist_ok=True)
             (out_dir / "step2_admission_tests.json").write_text(

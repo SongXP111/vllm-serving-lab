@@ -13,6 +13,7 @@
 - [Q5: 既然 vLLM 自带了 HTTP API Server，为什么生产环境必须先挡一层自己的 Gateway？为什么 M1 第一步规定“先只连 1 台 vLLM，不做智能路由”？](#q5-既然-vllm-自带了-http-api-server为什么生产环境必须先挡一层自己的-gateway为什么-m1-第一步规定先只连-1-台-vllm不做智能路由)
 - [Q6: 在流式推理（SSE）中，已经发出 HTTP Headers 后为什么不能再随意返回另一份 JSON 错误？M1 Step 1 的五大失败测试如何证明零资源泄漏？](#q6-在流式推理sse中已经发出-http-headers-后为什么不能再随意返回另一份-json-错误m1-step-1-的五大失败测试如何证明零资源泄漏)
 - [Q7: 为什么必须在 Gateway 层决定「接受、排队还是拒绝」后 Router 才有可用的负载状态？llm-d EPP 的 Flow Control 四大核心概念（Saturation / Flow / Priority / Fairness）是什么？](#q7-为什么必须在-gateway-层决定接受排队还是拒绝后-router-才有可用的负载状态llm-d-epp-的-flow-control-四大核心概念saturation--flow--priority--fairness是什么)
+- [Q8: 既然 vLLM 自己内部已经有 `waiting` 和 `running` 调度队列，为什么 Gateway 的队列必须独立于它们？](#q8-既然-vllm-自己内部已经有-waiting-和-running-调度队列为什么-gateway-的队列必须独立于它们)
 
 ---
 
@@ -428,6 +429,54 @@ Client (100 reqs) ──► Router ──┬──► vLLM-A (瞬间塞入 50 �
   1. **租户配额（Tenant Quota）**：限制单租户最大并发/速率，超限立即返回 **`429 Too Many Requests`**。
   2. **饱和与有界队列（Saturation & Bounded Queue）**：跟踪 `in_flight` 与 `max_in_flight`；饱和时进入有界队列（上限 `max_queue_size`），队列满或等待超过 `queue_timeout` 立即返回 **`503 Service Unavailable`**。
   3. **Priority + Per-Tenant Round-Robin 调度器**：按优先级分桶，同优先级内按 `tenant_id` 循环轮转唤醒等待中的 `asyncio.Future`；若客户端在排队等待期间主动断连，立即从队列中移除该条目，绝不浪费后续释放的后端槽位。
+
+---
+
+### Q8: 既然 vLLM 自己内部已经有 `waiting` 和 `running` 调度队列，为什么 Gateway 的队列必须独立于它们？
+
+#### ❓ 问题背景
+在 **M1 Step 2（准入控制与有界队列通关验收）** 中，核心考察点是：
+> *“能解释 Gateway 队列为何独立于 vLLM 的 `waiting` / `running`；有代码与自动化测试、`queue_depth` / `queue_wait` / `reject` / `cancel` 指标；无效请求不会进入后续推理队列。”*
+
+既然 vLLM 的 Scheduler 内部本来就维护了 `waiting`（等待队列）和 `running`（执行队列），为什么不能直接把所有请求全扔进 vLLM 的 `waiting` 队列，而非要在 Gateway 层再独立维护一层有界队列？
+
+---
+
+#### 💡 核心解析：两层队列管理的物理资源与职责边界完全不同
+
+```text
+                        【第 1 道闸门：业务流控、多租户治理与集群级延迟绑定】
+客户端洪峰 ──► [ Gateway 独立有界队列 (queue_depth <= queue_capacity) ]
+                 │  • 管什么：400 Schema 校验、429 租户配额/速率桶、Priority 防饥饿、租户 Round-Robin、排队断连摘除
+                 │  • 调度单位：HTTP JSON 请求 (未分词、未绑定特定 GPU 节点、未占显存)
+                 ▼ (严格限流 max_inflight，仅放行拿到槽位的有效请求！)
+              [ vLLM 内部 Scheduler (waiting / running) ]
+                    • 管什么：Token 级 Continuous Batching、PagedAttention 物理 KV 显存块分配与抢占 (Preemption)
+                    • 调度单位：SequenceGroup / Token IDs & Physical KV Cache Blocks
+```
+
+Gateway 队列必须独立于 vLLM `waiting` / `running` 队列的 **四大核心原因**：
+
+##### 1. 职责与调度粒度不同（业务多租户治理 vs 物理显存块拼图）
+* **vLLM 的 `waiting` / `running` 是“GPU 显存块调度器”**：
+  * 请求进入 vLLM 后先做 Tokenizer 分词放入 `waiting`；每个 Step（约 10~20ms），vLLM Scheduler 根据 **物理 GPU KV Cache Block** 剩余数量决定能否将请求从 `waiting` 拉入 `running`；若 Decode 途中显存耗尽，还会将 `running` 中的请求抢占（Preempt）退回 `waiting`。
+  * vLLM 的 `waiting` 队列**不具备多租户业务感知能力**：它不知道什么叫“单租户超配额返回 `429`”、不知道“同优先级下租户 A 与租户 B 必须 Round-Robin 交替执行防吵闹邻居”、也不知道“高优先级连续放行 3 次后必须让 1 次给低优先级防永久饥饿”。
+* **Gateway 的队列是“多租户业务流控器”**：
+  * 在请求尚未进入推理引擎之前，基于 `FlowKey = (tenant_id, priority)` 完成配额限流、优先级提权与租户间公平调度。
+
+##### 2. 将“无效 / 过期 / 排队断连”请求 100% 拦截在分词与推理队列之外
+* 若没有 Gateway 独立队列，所有请求直接涌入 vLLM：
+  * 哪怕请求 JSON 格式非法（`400`）、租户超限（`429`）、进门前或排队期间 Deadline 已过期（`504`）、或者客户端在排队中途早已断开连接（`499`），vLLM 进程仍需耗费 CPU 执行 HTTP 解析、甚至调用 HuggingFace Tokenizer 对长文本分词并塞入 `waiting` 队列。
+* **有了 Gateway 独立队列**：
+  * 非法请求（`400`）、超额请求（`429`）、队列满溢出请求（`503`）、过期请求（`504`）与排队中途断连请求（`499`）**100% 在 Gateway 层被当场拦截或从队列摘除（`invalid_and_rejected_entered_backend_count == 0`）**，绝不污染后端的推理队列。
+
+##### 3. 在多实例场景（M2 Router）下消除“调度悔恨（Scheduling Regret / 过早绑定）”
+* vLLM 的 `waiting` 队列是**单实例私有的（Instance-Local）**。一旦过早把请求塞进 `vLLM-A` 的 `waiting` 队列，即使隔壁 `vLLM-B` 瞬间空闲下来，该请求也无法从 `vLLM-A` 迁移到 `vLLM-B`。
+* Gateway 的有界队列是**集群级中心化、延迟绑定（Late-Binding）**的：请求在 Gateway 队列等待时不绑定具体节点，直到某台 vLLM 真正释放 `in_flight` 槽位的那一瞬间，才由 Router 派发过去。
+
+##### 4. 保护 vLLM 主进程 Event Loop 与 CPU 分词线程，避免产生 GPU 调度气泡
+* vLLM API Server 与 Tokenizer 运行在 CPU 上。如果让成百上千个并发请求直接堆积在 vLLM 内部，海量挂起协程与分词任务会争抢 CPU 与 GIL，拖慢主进程向 GPU 发射下一个 Step Kernel 的速度，导致正在 `running` 的请求出现 **Step 间气泡（TPOT 劣化）**。Gateway 用 `max_inflight` 锁死进入每台 vLLM 的并发上限，让 vLLM 的 `waiting` 队列常年保持极低水位，专心满负荷驱动 GPU。
+
 
 
 

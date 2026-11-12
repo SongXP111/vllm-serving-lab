@@ -187,7 +187,7 @@ flowchart TD
 python -m pytest tests/test_gateway_step1.py tests/test_gateway_step2.py -v
 ```
 
-**实测结果汇总（`11 passed in 2.00s`，完整落盘数据见 [`results/gateway/step2_admission_tests.json`](../results/gateway/step2_admission_tests.json)）**：
+**实测结果汇总（`12 passed in 2.13s`，完整落盘数据见 [`results/gateway/step2_admission_tests.json`](../results/gateway/step2_admission_tests.json)）**：
 
 | 测试编号与验收场景 | 设定参数 (`max_inflight=4, queue_capacity=20`) | 实测核心数据与证据 (`step2_admission_tests.json`) | 结论 |
 | :--- | :--- | :--- | :---: |
@@ -196,3 +196,4 @@ python -m pytest tests/test_gateway_step1.py tests/test_gateway_step2.py -v
 | **3. 高优持续涌入 + 低优防永久饥饿**<br>(`test_3_continuous_high_priority_flood_no_low_priority_starvation`) | 先入队 **3 个 `low`**，随后持续涌入 **9 个 `high`**（配置 `max_consecutive_high=3`） | • 实测 12 个排队请求的出队顺序：<br>`["high", "high", "high", "low", "high", "high", "high", "low", "high", "high", "high", "low"]`<br>• 高优成功插队享受 3:1 带宽，同时每 3 个 `high` 后必保底放行 1 个 `low`，**`low_priority_starved_count = 0`** | ✅ PASS |
 | **4. 客户端在排队期间主动取消**<br>(`test_4_client_cancel_in_queue_evicts_cleanly_and_preserves_slots`) | 4 个请求占满槽位，第 5 个请求 (`req-cancel-in-queue`) 排队中途断开，第 6 个 (`req-survivor`) 排在后面 | • `cancelled_in_queue_count = 1`<br>• `cancelled_request_sent_to_backend = false`（绝不白送后端浪费算力）<br>• 槽位释放时直接唤醒第 6 个请求 `req-survivor` (`200 OK`)，最终 `in_flight=0, queued=0` | ✅ PASS |
 | **5. 排队超时 (`503`)、全链路 Deadline (`504`) 与后台超时回收**<br>(`test_5_queue_timeout_deadline_and_backend_timeout_slot_recovery`) | `queue_timeout=40ms`，请求级 `X-Request-Deadline-Seconds: 0.02 / 0.04` | • 排队等槽位超时返回 **`503`** (`queue_timeout_exceeded`)<br>• 全链路 Deadline 在排队或执行态耗尽返回 **`504`** (`deadline_exceeded` / `gateway_timeout`)<br>• 超时后槽位 `100%` 回收 (`in_flight=0, queued=0`)，后续 4 个并发请求全部 `200 OK` | ✅ PASS |
+| **6. 四大通关指标与无效请求 100% 拦截验证**<br>(`test_6_pass_criteria_metrics_and_invalid_requests_blocked`) | 发送损坏 JSON (`400`)、缺 `messages` (`400`)、过期 Deadline (`504`)、超配额 (`429`) | • `invalid_and_rejected_entered_backend_count = 0`（无效请求 100% 拦截在推理队列前）<br>• `/admin/admission` 与 `/metrics` 完整暴露 `queue_depth`、`queue_wait`、`reject`、`cancel` 四大指标族 | ✅ PASS |

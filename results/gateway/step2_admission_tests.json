@@ -63,5 +63,38 @@
     "post_timeout_in_flight": 0,
     "post_timeout_queued": 0,
     "recovery_4_requests_all_200": true
+  },
+  "pass_criteria_metrics_and_invalid_filter": {
+    "invalid_and_rejected_sent_count": 4,
+    "invalid_and_rejected_entered_backend_count": 0,
+    "valid_entered_backend_count": 1,
+    "metrics_snapshot": {
+      "queue_depth": {
+        "current": 0,
+        "max_observed": 0,
+        "capacity": 20
+      },
+      "queue_wait": {
+        "admitted_count": 1,
+        "queued_admitted_count": 0,
+        "avg_queued_wait_ms": 0.0,
+        "max_wait_ms": 0.0
+      },
+      "reject": {
+        "total": 4,
+        "invalid_400": 2,
+        "quota_429": 1,
+        "rate_limit_429": 0,
+        "queue_full_503": 0,
+        "queue_timeout_503": 0,
+        "deadline_504": 1
+      },
+      "cancel": {
+        "total": 0,
+        "in_queue": 0,
+        "in_flight": 0
+      }
+    },
+    "prometheus_endpoint_verified": true
   }
 }

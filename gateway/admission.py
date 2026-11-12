@@ -8,6 +8,7 @@ Implements the core Flow Control concepts inspired by `llm-d EPP`:
 5. Priority Bands (`HIGH` > `NORMAL` > `LOW`) with Anti-Starvation (Consecutive Cap + Aging).
 6. Per-Tenant Round-Robin Fairness within each priority band (prevents Noisy Neighbor).
 7. End-to-end Deadline & Client Disconnect cleanup in both Queued and In-Flight states.
+8. First-class observability metrics: `queue_depth`, `queue_wait`, `reject`, and `cancel`.
 """
 import asyncio
 from collections import defaultdict, deque
@@ -103,12 +104,15 @@ class AdmissionStats:
     total_queued: int = 0
     max_observed_inflight: int = 0
     max_observed_queue_len: int = 0
+    rejected_400_invalid: int = 0
     rejected_429_quota: int = 0
     rejected_429_rate_limit: int = 0
     rejected_503_queue_full: int = 0
     rejected_503_queue_timeout: int = 0
     rejected_504_deadline_exceeded: int = 0
     cancelled_in_queue: int = 0
+    cancelled_in_flight: int = 0
+    queue_wait_samples_ms: List[float] = field(default_factory=list)
     dispatched_by_priority: Dict[str, int] = field(
         default_factory=lambda: {"high": 0, "normal": 0, "low": 0}
     )
@@ -140,6 +144,14 @@ class AdmissionController:
 
         self.stats = AdmissionStats()
 
+    def record_invalid_request(self) -> None:
+        """Record an invalid client request rejected before entering admission queue."""
+        self.stats.rejected_400_invalid += 1
+
+    def record_inflight_cancel(self) -> None:
+        """Record a request cancelled while executing in-flight."""
+        self.stats.cancelled_in_flight += 1
+
     def _get_token_bucket(self, tenant_id: str) -> TokenBucket:
         bucket = self.tenant_buckets.get(tenant_id)
         if bucket is None:
@@ -152,6 +164,7 @@ class AdmissionController:
 
     def _record_dispatch(self, ctx: RequestContext) -> None:
         prio = ctx.priority
+        self.stats.queue_wait_samples_ms.append(ctx.queue_wait_ms)
         self.stats.dispatched_by_priority[prio] = (
             self.stats.dispatched_by_priority.get(prio, 0) + 1
         )
@@ -476,25 +489,74 @@ class AdmissionController:
                 return
 
     def snapshot(self) -> Dict[str, Any]:
-        """Return live state + cumulative statistics for observability and testing."""
+        """Return live state + first-class queue_depth/queue_wait/reject/cancel metrics."""
+        samples = self.stats.queue_wait_samples_ms
+        queued_samples = [w for w in samples if w > 0.0]
+        avg_wait = (
+            round(sum(queued_samples) / len(queued_samples), 3)
+            if queued_samples
+            else 0.0
+        )
+        max_wait = round(max(samples), 3) if samples else 0.0
+
+        reject_total = (
+            self.stats.rejected_400_invalid
+            + self.stats.rejected_429_quota
+            + self.stats.rejected_429_rate_limit
+            + self.stats.rejected_503_queue_full
+            + self.stats.rejected_503_queue_timeout
+            + self.stats.rejected_504_deadline_exceeded
+        )
+        cancel_total = self.stats.cancelled_in_queue + self.stats.cancelled_in_flight
+
         return {
             "in_flight": self.in_flight,
             "max_inflight": self.cfg.max_inflight,
             "queued_count": self.queued_count,
+            "queue_depth": self.queued_count,
             "queue_capacity": self.cfg.queue_capacity,
             "tenant_active": dict(self.tenant_active),
+            "metrics": {
+                "queue_depth": {
+                    "current": self.queued_count,
+                    "max_observed": self.stats.max_observed_queue_len,
+                    "capacity": self.cfg.queue_capacity,
+                },
+                "queue_wait": {
+                    "admitted_count": len(samples),
+                    "queued_admitted_count": len(queued_samples),
+                    "avg_queued_wait_ms": avg_wait,
+                    "max_wait_ms": max_wait,
+                },
+                "reject": {
+                    "total": reject_total,
+                    "invalid_400": self.stats.rejected_400_invalid,
+                    "quota_429": self.stats.rejected_429_quota,
+                    "rate_limit_429": self.stats.rejected_429_rate_limit,
+                    "queue_full_503": self.stats.rejected_503_queue_full,
+                    "queue_timeout_503": self.stats.rejected_503_queue_timeout,
+                    "deadline_504": self.stats.rejected_504_deadline_exceeded,
+                },
+                "cancel": {
+                    "total": cancel_total,
+                    "in_queue": self.stats.cancelled_in_queue,
+                    "in_flight": self.stats.cancelled_in_flight,
+                },
+            },
             "stats": {
                 "total_arrived": self.stats.total_arrived,
                 "total_admitted_immediately": self.stats.total_admitted_immediately,
                 "total_queued": self.stats.total_queued,
                 "max_observed_inflight": self.stats.max_observed_inflight,
                 "max_observed_queue_len": self.stats.max_observed_queue_len,
+                "rejected_400_invalid": self.stats.rejected_400_invalid,
                 "rejected_429_quota": self.stats.rejected_429_quota,
                 "rejected_429_rate_limit": self.stats.rejected_429_rate_limit,
                 "rejected_503_queue_full": self.stats.rejected_503_queue_full,
                 "rejected_503_queue_timeout": self.stats.rejected_503_queue_timeout,
                 "rejected_504_deadline_exceeded": self.stats.rejected_504_deadline_exceeded,
                 "cancelled_in_queue": self.stats.cancelled_in_queue,
+                "cancelled_in_flight": self.stats.cancelled_in_flight,
                 "dispatched_by_priority": dict(self.stats.dispatched_by_priority),
                 "dispatched_by_tenant": dict(self.stats.dispatched_by_tenant),
                 "dispatch_order": list(self.stats.dispatch_order),
