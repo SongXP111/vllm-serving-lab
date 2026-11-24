@@ -1,0 +1,330 @@
+{
+  "_disclaimer": "Mock Replica simulator results for multi-replica routing algorithm validation only. Do NOT interpret `mock_rps` as real multi-GPU vLLM TPS. Real single-GPU RTX 5080 vLLM verification is recorded separately in results/gateway/m2_real_vllm_verification.json.",
+  "scenario_1_shared_system_prompt_multi_turn": {
+    "before_policy": "least-load",
+    "after_policy": "cache+load-aware",
+    "policies": {
+      "random": {
+        "completed_200": 24,
+        "wall_time_ms": 1172.0,
+        "mock_throughput_rps": 20.48,
+        "queue_time_avg_ms": 3.25,
+        "queue_time_p99_ms": 78.0,
+        "ttft_avg_ms": 103.21,
+        "ttft_p50_ms": 109.0,
+        "ttft_p99_ms": 203.0,
+        "simulated_replica_prefix_hit_rate": 0.0833,
+        "gateway_estimated_prefix_affinity": 0.0417,
+        "requests_by_replica": {
+          "replica-0": 13,
+          "replica-1": 2,
+          "replica-2": 9
+        },
+        "peak_local_concurrent_by_replica": {
+          "replica-0": 3,
+          "replica-1": 1,
+          "replica-2": 2
+        }
+      },
+      "least-load": {
+        "completed_200": 24,
+        "wall_time_ms": 1047.0,
+        "mock_throughput_rps": 22.92,
+        "queue_time_avg_ms": 0.0,
+        "queue_time_p99_ms": 0.0,
+        "ttft_avg_ms": 93.12,
+        "ttft_p50_ms": 109.0,
+        "ttft_p99_ms": 125.0,
+        "simulated_replica_prefix_hit_rate": 0.1667,
+        "gateway_estimated_prefix_affinity": 0.1667,
+        "requests_by_replica": {
+          "replica-0": 8,
+          "replica-1": 8,
+          "replica-2": 8
+        },
+        "peak_local_concurrent_by_replica": {
+          "replica-0": 1,
+          "replica-1": 1,
+          "replica-2": 1
+        }
+      },
+      "prefix-aware": {
+        "completed_200": 24,
+        "wall_time_ms": 563.0,
+        "mock_throughput_rps": 42.63,
+        "queue_time_avg_ms": 1.96,
+        "queue_time_p99_ms": 16.0,
+        "ttft_avg_ms": 36.58,
+        "ttft_p50_ms": 16.0,
+        "ttft_p99_ms": 125.0,
+        "simulated_replica_prefix_hit_rate": 0.75,
+        "gateway_estimated_prefix_affinity": 0.75,
+        "requests_by_replica": {
+          "replica-0": 8,
+          "replica-1": 8,
+          "replica-2": 8
+        },
+        "peak_local_concurrent_by_replica": {
+          "replica-0": 1,
+          "replica-1": 1,
+          "replica-2": 1
+        }
+      },
+      "cache+load-aware": {
+        "completed_200": 24,
+        "wall_time_ms": 563.0,
+        "mock_throughput_rps": 42.63,
+        "queue_time_avg_ms": 0.0,
+        "queue_time_p99_ms": 0.0,
+        "ttft_avg_ms": 39.25,
+        "ttft_p50_ms": 16.0,
+        "ttft_p99_ms": 110.0,
+        "simulated_replica_prefix_hit_rate": 0.75,
+        "gateway_estimated_prefix_affinity": 0.75,
+        "requests_by_replica": {
+          "replica-0": 8,
+          "replica-1": 8,
+          "replica-2": 8
+        },
+        "peak_local_concurrent_by_replica": {
+          "replica-0": 1,
+          "replica-1": 1,
+          "replica-2": 1
+        }
+      }
+    },
+    "before_vs_after_delta": {
+      "prefix_hit_rate_before": 0.1667,
+      "prefix_hit_rate_after": 0.75,
+      "ttft_avg_ms_before": 93.12,
+      "ttft_avg_ms_after": 39.25,
+      "ttft_p50_ms_before": 109.0,
+      "ttft_p50_ms_after": 16.0,
+      "ttft_p99_ms_before": 125.0,
+      "ttft_p99_ms_after": 110.0,
+      "mock_rps_before": 22.92,
+      "mock_rps_after": 42.63
+    }
+  },
+  "scenario_2_mixed_long_short": {
+    "policies": {
+      "random": {
+        "completed_200": 16,
+        "wall_time_ms": 265.0,
+        "mock_throughput_rps": 60.38,
+        "queue_time_avg_ms": 5.88,
+        "queue_time_p99_ms": 47.0,
+        "ttft_avg_ms": 31.31,
+        "ttft_p50_ms": 16.0,
+        "ttft_p99_ms": 78.0,
+        "simulated_replica_prefix_hit_rate": 0.5556,
+        "gateway_estimated_prefix_affinity": 0.3125,
+        "requests_by_replica": {
+          "replica-0": 7,
+          "replica-1": 2,
+          "replica-2": 7
+        },
+        "peak_local_concurrent_by_replica": {
+          "replica-0": 3,
+          "replica-1": 1,
+          "replica-2": 3
+        }
+      },
+      "least-load": {
+        "completed_200": 16,
+        "wall_time_ms": 391.0,
+        "mock_throughput_rps": 40.92,
+        "queue_time_avg_ms": 0.0,
+        "queue_time_p99_ms": 0.0,
+        "ttft_avg_ms": 32.38,
+        "ttft_p50_ms": 16.0,
+        "ttft_p99_ms": 94.0,
+        "simulated_replica_prefix_hit_rate": 0.4444,
+        "gateway_estimated_prefix_affinity": 0.25,
+        "requests_by_replica": {
+          "replica-0": 6,
+          "replica-1": 4,
+          "replica-2": 6
+        },
+        "peak_local_concurrent_by_replica": {
+          "replica-0": 2,
+          "replica-1": 1,
+          "replica-2": 2
+        }
+      },
+      "prefix-aware": {
+        "completed_200": 16,
+        "wall_time_ms": 281.0,
+        "mock_throughput_rps": 56.94,
+        "queue_time_avg_ms": 0.0,
+        "queue_time_p99_ms": 0.0,
+        "ttft_avg_ms": 28.38,
+        "ttft_p50_ms": 16.0,
+        "ttft_p99_ms": 94.0,
+        "simulated_replica_prefix_hit_rate": 0.6667,
+        "gateway_estimated_prefix_affinity": 0.375,
+        "requests_by_replica": {
+          "replica-0": 4,
+          "replica-1": 8,
+          "replica-2": 4
+        },
+        "peak_local_concurrent_by_replica": {
+          "replica-0": 1,
+          "replica-1": 2,
+          "replica-2": 1
+        }
+      },
+      "cache+load-aware": {
+        "completed_200": 16,
+        "wall_time_ms": 250.0,
+        "mock_throughput_rps": 64.0,
+        "queue_time_avg_ms": 1.0,
+        "queue_time_p99_ms": 16.0,
+        "ttft_avg_ms": 22.38,
+        "ttft_p50_ms": 15.0,
+        "ttft_p99_ms": 78.0,
+        "simulated_replica_prefix_hit_rate": 0.6667,
+        "gateway_estimated_prefix_affinity": 0.375,
+        "requests_by_replica": {
+          "replica-0": 4,
+          "replica-1": 8,
+          "replica-2": 4
+        },
+        "peak_local_concurrent_by_replica": {
+          "replica-0": 1,
+          "replica-1": 2,
+          "replica-2": 1
+        }
+      }
+    }
+  },
+  "scenario_3_hotspot_locality_vs_load_conflict": {
+    "conflict_summary": {
+      "prefix_aware_max_reqs_on_one_replica": 8,
+      "prefix_aware_queue_p99_ms": 109.0,
+      "prefix_aware_ttft_p99_ms": 109.0,
+      "prefix_aware_prefix_hit": 1.0,
+      "least_load_queue_p99_ms": 62.0,
+      "least_load_ttft_p99_ms": 62.0,
+      "least_load_prefix_hit": 0.5,
+      "cache_load_aware_max_reqs_on_one_replica": 5,
+      "cache_load_aware_queue_p99_ms": 47.0,
+      "cache_load_aware_ttft_p99_ms": 47.0,
+      "cache_load_aware_prefix_hit": 0.75
+    },
+    "policies": {
+      "random": {
+        "completed_200": 8,
+        "wall_time_ms": 140.0,
+        "mock_throughput_rps": 57.14,
+        "queue_time_avg_ms": 38.5,
+        "queue_time_p99_ms": 109.0,
+        "ttft_avg_ms": 70.0,
+        "ttft_p50_ms": 78.0,
+        "ttft_p99_ms": 109.0,
+        "simulated_replica_prefix_hit_rate": 0.5,
+        "gateway_estimated_prefix_affinity": 0.6667,
+        "requests_by_replica": {
+          "replica-0": 4,
+          "replica-1": 2,
+          "replica-2": 2
+        },
+        "peak_local_concurrent_by_replica": {
+          "replica-0": 4,
+          "replica-1": 2,
+          "replica-2": 2
+        }
+      },
+      "least-load": {
+        "completed_200": 8,
+        "wall_time_ms": 93.0,
+        "mock_throughput_rps": 86.02,
+        "queue_time_avg_ms": 23.0,
+        "queue_time_p99_ms": 62.0,
+        "ttft_avg_ms": 48.38,
+        "ttft_p50_ms": 62.0,
+        "ttft_p99_ms": 62.0,
+        "simulated_replica_prefix_hit_rate": 0.5,
+        "gateway_estimated_prefix_affinity": 0.6667,
+        "requests_by_replica": {
+          "replica-0": 3,
+          "replica-1": 3,
+          "replica-2": 2
+        },
+        "peak_local_concurrent_by_replica": {
+          "replica-0": 3,
+          "replica-1": 3,
+          "replica-2": 2
+        }
+      },
+      "prefix-aware": {
+        "completed_200": 8,
+        "wall_time_ms": 140.0,
+        "mock_throughput_rps": 57.14,
+        "queue_time_avg_ms": 58.5,
+        "queue_time_p99_ms": 109.0,
+        "ttft_avg_ms": 62.25,
+        "ttft_p50_ms": 47.0,
+        "ttft_p99_ms": 109.0,
+        "simulated_replica_prefix_hit_rate": 1.0,
+        "gateway_estimated_prefix_affinity": 0.8889,
+        "requests_by_replica": {
+          "replica-0": 0,
+          "replica-1": 8,
+          "replica-2": 0
+        },
+        "peak_local_concurrent_by_replica": {
+          "replica-0": 0,
+          "replica-1": 8,
+          "replica-2": 0
+        }
+      },
+      "cache+load-aware": {
+        "completed_200": 8,
+        "wall_time_ms": 47.0,
+        "mock_throughput_rps": 170.21,
+        "queue_time_avg_ms": 23.5,
+        "queue_time_p99_ms": 47.0,
+        "ttft_avg_ms": 39.0,
+        "ttft_p50_ms": 47.0,
+        "ttft_p99_ms": 47.0,
+        "simulated_replica_prefix_hit_rate": 0.75,
+        "gateway_estimated_prefix_affinity": 0.7778,
+        "requests_by_replica": {
+          "replica-0": 3,
+          "replica-1": 5,
+          "replica-2": 0
+        },
+        "peak_local_concurrent_by_replica": {
+          "replica-0": 3,
+          "replica-1": 5,
+          "replica-2": 0
+        }
+      }
+    }
+  },
+  "scenario_4_unresponsive_replica_failover": {
+    "hung_replica_id": "replica-2",
+    "read_timeout_ms": 60.0,
+    "circuit_breaker_threshold": 2,
+    "status_sequence": [
+      504,
+      504,
+      200,
+      200,
+      200,
+      200,
+      200,
+      200,
+      200,
+      200
+    ],
+    "timeouts_before_circuit_open": 2,
+    "post_failover_succeeded_200": 8,
+    "failover_target_replicas": [
+      "replica-0"
+    ],
+    "post_failover_latency_p99_ms": 47.0,
+    "hung_replica_leaked_inflight": 0
+  }
+}

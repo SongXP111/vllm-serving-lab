@@ -1,9 +1,9 @@
-# 🌐 大模型服务网关设计与实测报告 (M1: Async Streaming Gateway & Admission Control)
+# 🌐 大模型服务网关与路由设计与实测报告 (M1 & M2: Async Gateway, Admission Control & Prefix-Aware Routing)
 
-> **对应里程碑**：Milestone 1 (M1) — 请求生命周期控制、异步流式透传、异常故障语义与准入过载保护  
-> **核心代码目录**：[`gateway/`](../gateway/)（[`app.py`](../gateway/app.py)、[`admission.py`](../gateway/admission.py)、[`config.py`](../gateway/config.py)、[`models.py`](../gateway/models.py)）  
-> **验证测试套件**：[`tests/test_gateway_step1.py`](../tests/test_gateway_step1.py)（Step 1 故障注入）、[`tests/test_gateway_real_vllm.py`](../tests/test_gateway_real_vllm.py)（真机 vLLM 端到端集成测试）、[`tests/test_gateway_step2.py`](../tests/test_gateway_step2.py)（Step 2 准入控制与公平性队列测试）  
-> **实测落盘数据**：[`results/gateway/step1_failure_tests.json`](../results/gateway/step1_failure_tests.json)、[`results/gateway/step1_real_vllm_integration.json`](../results/gateway/step1_real_vllm_integration.json)、[`results/gateway/step2_admission_tests.json`](../results/gateway/step2_admission_tests.json)
+> **对应里程碑**：Milestone 1 (M1：请求生命周期、异步流式透传与准入过载保护) + Milestone 2 (M2：多实例注册表与 `Filter → Score → Pick` 路由)  
+> **核心代码目录**：[`gateway/`](../gateway/)（[`app.py`](../gateway/app.py)、[`admission.py`](../gateway/admission.py)、[`registry.py`](../gateway/registry.py)、[`router.py`](../gateway/router.py)、[`config.py`](../gateway/config.py)、[`models.py`](../gateway/models.py)）  
+> **验证测试套件**：[`tests/test_gateway_step1.py`](../tests/test_gateway_step1.py)（M1 Step 1 故障注入）、[`tests/test_gateway_real_vllm.py`](../tests/test_gateway_real_vllm.py)（M1 真机 vLLM 集成测试）、[`tests/test_gateway_step2.py`](../tests/test_gateway_step2.py)（M1 Step 2 准入控制）、[`tests/test_gateway_m2_routing.py`](../tests/test_gateway_m2_routing.py)（M2 注册表与路由单元）、[`tests/test_gateway_m2_benchmarks.py`](../tests/test_gateway_m2_benchmarks.py)（M2 物理仿真 4 场景四策略对比）、[`tests/test_gateway_m2_real_vllm.py`](../tests/test_gateway_m2_real_vllm.py)（M2 单卡 RTX 5080 真实 vLLM 校验）  
+> **实测落盘数据**：[`step1_failure_tests.json`](../results/gateway/step1_failure_tests.json)、[`step1_real_vllm_integration.json`](../results/gateway/step1_real_vllm_integration.json)、[`step2_admission_tests.json`](../results/gateway/step2_admission_tests.json)、[`m2_routing_tests.json`](../results/gateway/m2_routing_tests.json)、[`m2_mock_policy_comparison.json`](../results/gateway/m2_mock_policy_comparison.json)、[`m2_real_vllm_verification.json`](../results/gateway/m2_real_vllm_verification.json)
 
 ---
 
@@ -21,6 +21,12 @@
    - [3.2 状态码反压语义严格分离（`429` vs `503` vs `504`）](#32-状态码反压语义严格分离429-vs-503-vs-504)
    - [3.3 优先级防饥饿与多租户 Round-Robin 公平调度算法](#33-优先级防饥饿与多租户-round-robin-公平调度算法)
    - [3.4 M1 Step 2 自动化压测与边界实测报告 (`step2_admission_tests.json`)](#34-m1-step-2-自动化压测与边界实测报告-step2_admission_testsjson)
+4. [M2：多实例注册表（`ReplicaRegistry`）与可切换智能路由（`Filter → Score → Pick`）](#4-m2多实例注册表replicaregistry与可切换智能路由filter--score--pick)
+   - [4.1 `ReplicaRegistry` 状态建模与“估计亲和度 vs 真实缓存命中”严格边界](#41-replicaregistry-状态建模与估计亲和度-vs-真实缓存命中严格边界)
+   - [4.2 `Filter → Score → Pick` 流水线与 4 种可切换路由策略](#42-filter--score--pick-流水线与-4-种可切换路由策略)
+   - [4.3 M2 自动化测试与四策略对比实测报告 (`m2_routing_tests.json`)](#43-m2-自动化测试与四策略对比实测报告-m2_routing_testsjson)
+   - [4.4 M2 Part A：Mock 多副本 4 场景 Before/After 与冲突基准报告 (`m2_mock_policy_comparison.json`)](#44-m2-part-amock-多副本-4-场景-beforeafter-与冲突基准报告-m2_mock_policy_comparisonjson)
+   - [4.5 M2 Part B：单卡 RTX 5080 真实 vLLM 行为与 `/metrics` 缓存命中交叉校验 (`m2_real_vllm_verification.json`)](#45-m2-part-b单卡-rtx-5080-真实-vllm-行为与-metrics-缓存命中交叉校验-m2_real_vllm_verificationjson)
 
 ---
 
@@ -197,3 +203,138 @@ python -m pytest tests/test_gateway_step1.py tests/test_gateway_step2.py -v
 | **4. 客户端在排队期间主动取消**<br>(`test_4_client_cancel_in_queue_evicts_cleanly_and_preserves_slots`) | 4 个请求占满槽位，第 5 个请求 (`req-cancel-in-queue`) 排队中途断开，第 6 个 (`req-survivor`) 排在后面 | • `cancelled_in_queue_count = 1`<br>• `cancelled_request_sent_to_backend = false`（绝不白送后端浪费算力）<br>• 槽位释放时直接唤醒第 6 个请求 `req-survivor` (`200 OK`)，最终 `in_flight=0, queued=0` | ✅ PASS |
 | **5. 排队超时 (`503`)、全链路 Deadline (`504`) 与后台超时回收**<br>(`test_5_queue_timeout_deadline_and_backend_timeout_slot_recovery`) | `queue_timeout=40ms`，请求级 `X-Request-Deadline-Seconds: 0.02 / 0.04` | • 排队等槽位超时返回 **`503`** (`queue_timeout_exceeded`)<br>• 全链路 Deadline 在排队或执行态耗尽返回 **`504`** (`deadline_exceeded` / `gateway_timeout`)<br>• 超时后槽位 `100%` 回收 (`in_flight=0, queued=0`)，后续 4 个并发请求全部 `200 OK` | ✅ PASS |
 | **6. 四大通关指标与无效请求 100% 拦截验证**<br>(`test_6_pass_criteria_metrics_and_invalid_requests_blocked`) | 发送损坏 JSON (`400`)、缺 `messages` (`400`)、过期 Deadline (`504`)、超配额 (`429`) | • `invalid_and_rejected_entered_backend_count = 0`（无效请求 100% 拦截在推理队列前）<br>• `/admin/admission` 与 `/metrics` 完整暴露 `queue_depth`、`queue_wait`、`reject`、`cancel` 四大指标族 | ✅ PASS |
+
+---
+
+## 4. M2：多实例注册表（`ReplicaRegistry`）与可切换智能路由（`Filter → Score → Pick`）
+
+### 4.1 `ReplicaRegistry` 状态建模与“估计亲和度 vs 真实缓存命中”严格边界
+
+在 [`gateway/registry.py`](../gateway/registry.py) 中，[`ReplicaRegistry`](../gateway/registry.py#L140-L296) 为每个后端 vLLM 实例维护完整的运行时状态 [`ReplicaState`](../gateway/registry.py#L28-L115)：
+
+* **端点与健康熔断**：`endpoint`、`healthy`、`consecutive_failures`、`circuit_open_until`（连续后端传输失败达到阈值自动熔断冷却，同时支持 `POST /admin/replicas/{id}/health` 手动摘流/恢复）。
+* **实时负载与容量提示（Capacity Hints）**：
+  * `inflight`（Gateway 实时在途并发，请求派发时 `+1`，任何正常/异常/断连退出路径幂等 `-1`）
+  * `max_inflight`（单实例并发容量上限提示）
+  * `backend_waiting_queue` / `backend_running_requests`（来自 vLLM `/metrics` 或运行期提示）
+  * `kv_cache_usage_perc` / `kv_cache_capacity_blocks`（KV 显存占用率与容量块数提示）
+* **关键红线——严格隔离“估计亲和度”与“真实 vLLM Cache Hit”**：
+  * 网关层 [`EstimatedPrefixCacheIndex`](../gateway/router.py#L121-L185) 仅根据历史路由记录 + 链式 Token-Prefix Block Hash + 有界 LRU 估算亲和度，所有响应头与指标均显式标注 **`estimated_prefix_affinity`**（如 `X-Estimated-Prefix-Affinity`、`gateway_router_estimated_prefix_affinity_avg`）。
+  * 真实缓存命中字段 `observed_vllm_metrics.prefix_cache_hit_rate` **在调用 `POST /admin/replicas/sync-metrics` 抓取真实 vLLM `/metrics`（`vllm:prefix_cache_hits_total` / `vllm:prefix_cache_queries_total`）之前严格保持 `None`**，绝不把网关估计命中冒充为真实 GPU KV Cache Hit！
+
+---
+
+### 4.2 `Filter → Score → Pick` 流水线与 4 种可切换路由策略
+
+在 [`gateway/router.py`](../gateway/router.py) 中，[`InstanceRouter`](../gateway/router.py#L316-L526) 在请求通过 M1 准入控制（`acquire_slot`）获得执行槽位的一刻执行**延迟绑定选路（Late Binding）**：
+
+```mermaid
+flowchart LR
+    Admit["通过 M1 准入控制<br/>获得执行槽位"] --> F1["Filter 1: HealthFilter<br/>剔除不健康/熔断节点"]
+    F1 --> F2["Filter 2: CapacityFilter<br/>剔除 inflight 满载或 KV>=95% 节点<br/>(全满时优雅降级回健康集)"]
+    F2 --> S1["LoadScorer<br/>(inflight+waiting)/max & KV 余量"]
+    F2 --> S2["EstimatedPrefixAffinityScorer<br/>链式 16-token Block Hash + 有界 LRU"]
+    S1 & S2 --> Policy["策略组合打分<br/>random / least-load / prefix-aware / cache+load-aware"]
+    Policy --> Pick["Pick 拍板 + 冷请求最少负载/最冷缓存 Tie-break"]
+    Pick --> Dispatch["派发至目标 Replica<br/>附带 X-Routed-Replica / X-Estimated-Prefix-Affinity"]
+```
+
+| 路由策略 (`RoutingPolicy`) | 核心决策逻辑 | 适用场景与权衡 |
+| :--- | :--- | :--- |
+| **`random`** | 过滤健康与可用节点后均匀随机选择 | 最简无状态基线对照组 |
+| **`least-load`** | 仅按 `LoadScorer`（综合 `inflight`、`backend_waiting_queue` 与 `kv_cache_usage_perc`）选最闲节点 | 负载均衡基线；无前缀亲和，长公共前缀会在各节点重复 Prefill |
+| **`prefix-aware`** | 仅按 `EstimatedPrefixAffinityScorer` 选最长连续前缀匹配节点；冷启动平局按最闲且缓存最冷节点均匀打散（`no-hit-lru` 思想） | 最大化前缀复用；但在单一热门前缀高并发洪峰下容易将单个热节点打到 `100%` 满载 |
+| **`cache+load-aware`** | 加权融合 `w_prefix * eff_prefix + w_load * load_score`（默认 `0.55 / 0.45`），且当热节点达到 `hotspot_load_threshold (0.75)` 或 `kv_hotspot_threshold (0.85)` 时自动对亲和度施加热点衰减（Hotspot Damping） | **生产推荐默认方向**：中低负载吃满前缀缓存亲和，热点逼近饱和或高 KV 压力时主动溢出分流至空闲节点 |
+
+支持通过 `GatewayConfig(routing_policy=...)`、运行时管理接口 `POST /admin/routing/policy` 以及单请求头 `X-Routing-Policy` 三种方式无缝切换策略。
+
+---
+
+### 4.3 M2 自动化测试与四策略对比实测报告 (`m2_routing_tests.json`)
+
+运行 M1 + M2 全量回归与路由测试：
+
+```bash
+python -m pytest tests/test_gateway_step1.py tests/test_gateway_step2.py tests/test_gateway_m2_routing.py -v
+```
+
+**全量实测结果（`18 passed in 2.45s`，M2 详细落盘数据见 [`results/gateway/m2_routing_tests.json`](../results/gateway/m2_routing_tests.json)）**：
+
+#### 1. 四策略同负载对比（3 实例 × 3 个独立共享前缀 × 6 轮 = 18 请求）
+
+| 策略 | 平均估计前缀亲和度 (`avg_estimated_prefix_affinity`) | 非零亲和请求占比 (`nonzero_ratio`) | 三实例流量分布 (`replica-0 / 1 / 2`) |
+| :--- | :---: | :---: | :---: |
+| **`random`** | `0.4167` | `55.56%` | `9 / 2 / 7` |
+| **`least-load`** | `0.4167` | `55.56%` | `9 / 2 / 7` |
+| **`prefix-aware`** | **`0.6250`** *(理论最优)* | **`83.33%`** *(15/18 热轮次全中)* | **`6 / 6 / 6`** *(冷启动最冷缓存打散)* |
+| **`cache+load-aware`** | **`0.6250`** *(理论最优)* | **`83.33%`** *(15/18 热轮次全中)* | **`6 / 6 / 6`** |
+
+#### 2. 热点倾斜洪峰与 KV 压力溢出保护验证（3 实例，单实例 `max_inflight=4`，6 并发同前缀洪峰）
+
+| 验证场景 | 实测核心指标 (`m2_routing_tests.json`) | 结论 |
+| :--- | :--- | :---: |
+| **纯 `prefix-aware` 6 并发热点洪峰** | 热节点 `replica-0` 峰值并发被打满至 **`4/4` (100% 饱和)**，仅溢出 `2` 个请求至其他节点 | 印证热点倾斜风险 |
+| **`cache+load-aware` 6 并发热点洪峰** | 热节点 `replica-0` 峰值并发被平稳控制在 **`3/4` (75% 热点阈值)**，主动溢出 **`3` 个请求**至空闲节点（`3 / 0 / 3`） | ✅ 兼顾亲和与防打爆 |
+| **高 KV 压力 (`90%`) 溢出保护** | 当热节点 `kv_cache_usage_perc = 0.90 >= 0.85` 时，`cache+load-aware` 立刻分流至空闲节点 | ✅ PASS |
+| **估计亲和 vs 真实 vLLM 指标隔离** | 同步前 `observed_vllm_metrics.prefix_cache_hit_rate = null`；同步真实 vLLM `/metrics` 后精准解析为 `0.75` (`750/1000`) | ✅ PASS |
+| **链式 Block Hash 与有界 LRU 淘汰** | 中途改 1 个 Token 时 Block 0 保持命中、Block 1/2 级联失效；LRU 满载时优先淘汰叶子块保留基础前缀块 | ✅ PASS |
+| **流式断连跨实例零泄漏** | 中途发送 ASGI `http.disconnect` 后，上游流关闭且全局与各实例 `inflight` 全部归 `0` | ✅ PASS |
+
+---
+
+### 4.4 M2 Part A：Mock 多副本 4 场景 Before/After 与冲突基准报告 (`m2_mock_policy_comparison.json`)
+
+> ⚠️ **口径与边界声明**：本节所有吞吐指标（`mock_throughput_rps`）与延迟数据均产自**带物理 Prefill/KV LRU 延迟模型的 3-Replica Mock 仿真器**（[`tests/test_gateway_m2_benchmarks.py`](../tests/test_gateway_m2_benchmarks.py)），仅用于**多副本路由算法在相同 workload 下的相对 Before/After 对比验证**，**严禁将 Mock 吞吐当作真实多 GPU 集群 TPS**。真实 RTX 5080 物理行为见 [4.5 节](#45-m2-part-b单卡-rtx-5080-真实-vllm-行为与-metrics-缓存命中交叉校验-m2_real_vllm_verificationjson)。
+
+#### 场景 1：共享 System Prompt 多轮请求 — Before (`least-load`) vs After (`cache+load-aware`)
+*Workload*：6 个独立长前缀 Agent（各 12 块 = 192 tokens，总工作集 72 块）× 4 轮 = 24 请求，3 台 Replica 单机有限 KV 容量 = 30 块（集群总容量 90 块）。
+
+| 路由策略 | Queue Time Avg / P99 | TTFT Avg | TTFT P50 | TTFT P99 | Mock 相对吞吐 (`mock_rps`) | 模拟 Replica Prefix Hit |
+| :--- | :---: | :---: | :---: | :---: | :---: | :---: |
+| `random` | `3.25 / 78.0 ms` | `103.21 ms` | `109.0 ms` | `203.0 ms` | `20.48` | `8.33%` |
+| **`least-load` (Before)** | `0.00 / 0.0 ms` | `93.12 ms` | **`109.0 ms`** | `125.0 ms` | **`22.92`** | **`16.67%`** *(跨机撒散引发 LRU 抖动)* |
+| `prefix-aware` | `1.96 / 16.0 ms` | `36.58 ms` | `16.0 ms` | `125.0 ms` | `42.63` | `75.00%` |
+| **`cache+load-aware` (After)** | **`0.00 / 0.0 ms`** | **`39.25 ms` (-57.8%)** | **`16.0 ms` (6.8x 提速)** | **`110.0 ms`** | **`42.63` (+86.0%)** | **`75.00%` (+58.3 pct)** |
+
+#### 场景 2：长短混合负载（16 块长文档 Prefill + 2 块短对话混合，16 请求）
+
+| 路由策略 | Queue Time P99 | TTFT Avg | TTFT P99 | Mock 相对吞吐 (`mock_rps`) | 模拟 Replica Prefix Hit |
+| :--- | :---: | :---: | :---: | :---: | :---: |
+| `random` | `47.0 ms` | `31.31 ms` | `78.0 ms` | `60.38` | `55.56%` |
+| `least-load` | `0.0 ms` | `32.38 ms` | `94.0 ms` | `40.92` | `44.44%` |
+| `prefix-aware` | `0.0 ms` | `28.38 ms` | `94.0 ms` | `56.94` | `66.67%` |
+| **`cache+load-aware`** | `16.0 ms` | **`22.38 ms`** | **`78.0 ms`** | **`64.00`** | **`66.67%`** |
+
+#### 场景 3：热门前缀集中到一台机器 — Cache Locality 与 Load Balance 正面冲突实验
+*Workload*：先对 1 台热节点预热 `hotDoc`（12 块），随后瞬间并发涌入 **8 个完全相同热门前缀请求**（每台 Replica 的 GPU 并发执行槽 `gpu_exec_slots = 2`，超额将在单机本地队列排队）。
+
+| 路由策略 | 单机最高堆积请求数 | Queue Time P99 | TTFT P99 | Mock 相对吞吐 (`mock_rps`) | 模拟 Replica Prefix Hit | 冲突表现诊断 |
+| :--- | :---: | :---: | :---: | :---: | :---: | :--- |
+| **`prefix-aware`** | **`8 / 8` (100% 扎堆单机)** | **`109.0 ms` (最差)** | **`109.0 ms` (最差)** | **`57.14` (最差)** | **`100.0%` (最高)** | **局部性胜、负载均衡崩塌**：吃满缓存但热机本地排队爆表，其余 2 机完全闲置 |
+| **`least-load`** | `3 / 8` (`3/3/2` 均匀) | `62.0 ms` | `62.0 ms` | `86.02` | **`50.0%` (最低)** | **负载均衡胜、局部性受损**：均匀打散导致大量冷 Prefill 重算 |
+| **`cache+load-aware`** | **`5 / 8` (热机触发溢出分流)** | **`47.0 ms` (最优)** | **`47.0 ms` (-56.9% vs prefix-aware)** | **`170.21` (最优)** | **`75.0%` (+25 pct vs least-load)** | **冲突最优折中**：在热机吃满第一波命中后主动溢出至空闲机，实现尾延迟与吞吐双赢 |
+
+#### 场景 4：某台 Replica 停止响应（Hang → `ReadTimeout 504` → 自动熔断切流）
+* *实验设置*：将已预热的 `replica-2` 彻底挂死（无响应），`read_timeout = 60ms`，熔断阈值 = 连续 2 次失败，随后连续发送 10 个请求。
+* *实测结果*：
+  * 响应序列：`[504, 504, 200, 200, 200, 200, 200, 200, 200, 200]`（仅前 2 次探测超时 `60ms` 触发熔断，后续 **8/8 全部 `200 OK` 自动切换至健康节点 `replica-0`**）。
+  * 切流后尾延迟 `post_failover_latency_p99_ms = 47.0 ms`，挂死节点残留 `hung_replica_leaked_inflight = 0`。
+
+---
+
+### 4.5 M2 Part B：单卡 RTX 5080 真实 vLLM 行为与 `/metrics` 缓存命中交叉校验 (`m2_real_vllm_verification.json`)
+
+在本地单卡 **NVIDIA RTX 5080 Laptop GPU** 上启动真实 `vllm-server`（模型 `qwen2.5-7b-instruct-fp8`，开启 `--enable-prefix-caching`），运行 [`tests/test_gateway_m2_real_vllm.py`](../tests/test_gateway_m2_real_vllm.py)（**`1 passed in 3.62s`**），通过 M2 Gateway（`cache+load-aware`）发送 1 轮冷启动 + 3 轮共享 ~2,185 Token 长 System Prompt 流式请求，并在前后分别调用 `POST /admin/replicas/sync-metrics` 拉取真实 vLLM `/metrics` 增量进行交叉核对：
+
+| 轮次与阶段 | 真实 RTX 5080 TTFT | 真实 E2E 延迟 | Gateway 估计亲和度 (`X-Estimated-Prefix-Affinity`) |
+| :--- | :---: | :---: | :---: |
+| **Turn 0 (Cold 冷启动)** | **`1,682.28 ms`** | `1,795.40 ms` | `0.0000` |
+| **Turn 1 (Warm 热复用)** | **`86.54 ms`** | `201.87 ms` | `0.9912` |
+| **Turn 2 (Warm 热复用)** | **`76.08 ms`** | `271.72 ms` | `1.0000` |
+| **Turn 3 (Warm 热复用)** | **`77.30 ms`** | `271.89 ms` | `1.0000` |
+| **汇总对比** | **冷 `1682.28 ms` → 热均 `79.97 ms`（提速 `21.04x`）** | — | **热轮次估计均值 `99.71%`（四轮均值 `74.78%`）** |
+
+**真实 vLLM `/metrics` Ground-Truth 增量校验（`POST /admin/replicas/sync-metrics`）**：
+* `vllm:prefix_cache_queries_total` 增量：**`8,740` tokens**（4 轮 × ~2,185 tokens）
+* `vllm:prefix_cache_hits_total` 增量：**`6,480` tokens**（后 3 轮精准命中物理 GPU KV Block）
+* **真实观测缓存命中率 (`observed_vllm_delta_hit_rate`) = `74.14%` (`6,480 / 8,740`)** —— 与网关侧独立计算的四轮平均估计亲和度 **`74.78%`** 误差仅 `0.64%`，既证明了链式 Token-Prefix Hash 估算器在真机上的高保真度，又严格守住了“估计亲和度与真实 vLLM 观测命中分离上报”的工程红线！

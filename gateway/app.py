@@ -1,24 +1,25 @@
-"""Production-style Async LLM Serving Gateway (M1 Step 1 & Step 2).
+"""Production-style Async LLM Serving Gateway (M1 Step 1/2 & M2 Multi-Replica Routing).
 
 Responsibilities:
-- Step 1:
-  1. Single-backend async forwarding for `POST /v1/chat/completions` (both
-     `stream=false` JSON and `stream=true` chunk-by-chunk SSE passthrough).
-  2. Zero full-response buffering in streaming mode (`aiter_raw()`).
-  3. Connection pool reuse via FastAPI `lifespan` and `httpx.AsyncClient`.
-  4. Granular 4D timeouts (`connect`, `read`, `write`, `pool`).
-  5. End-to-end `request_id` generation and propagation (`X-Request-ID`).
-  6. Explicit 3-state request lifecycle (`NOT_STARTED` -> `STREAMING` -> `FINISHED`).
-  7. Client disconnect detection (`request.is_disconnected()` & `CancelledError`)
-     with immediate upstream cancellation (`await upstream_resp.aclose()`).
-- Step 2:
-  8. Admission Control (`max_inflight=4`) & Bounded Queue (`queue_capacity=20`).
-  9. Flow Control: `tenant_id` quota & Token Bucket rate limit (`429 Too Many Requests`)
-     strictly separated from system overload backpressure (`503 Service Unavailable`).
-  10. Priority tiers (`high` > `normal` > `low`) with anti-starvation cap/aging
-      and Per-Tenant Round-Robin fairness within each priority band.
-  11. End-to-end `deadline` and cancellation cleanup across both Queued and
-      In-Flight states.
+- M1 Step 1:
+  1. Async forwarding for `POST /v1/chat/completions` (`stream=false` JSON and
+     `stream=true` zero-buffer chunk-by-chunk SSE passthrough).
+  2. Connection pool reuse via FastAPI `lifespan` and `httpx.AsyncClient`.
+  3. Granular 4D timeouts (`connect`, `read`, `write`, `pool`) & `X-Request-ID`.
+  4. Explicit 3-state request lifecycle (`NOT_STARTED` -> `STREAMING` -> `FINISHED`).
+  5. Client disconnect detection with immediate upstream cancellation (`aclose()`).
+- M1 Step 2:
+  6. Admission Control (`max_inflight`) & Bounded Queue (`queue_capacity`).
+  7. Tenant quota & Token Bucket rate limit (`429`) separated from overload (`503`).
+  8. Priority tiers (`high` > `normal` > `low`) with anti-starvation + Per-Tenant Fairness.
+  9. End-to-end `deadline` and cancellation cleanup across Queued & In-Flight states.
+- M2:
+  10. `ReplicaRegistry` tracking endpoint, health/circuit breaker, live `inflight`,
+      backend queue & KV capacity hints, plus real observed vLLM metrics.
+  11. `InstanceRouter` (`Filter -> Score -> Pick`) with four switchable policies:
+      `random`, `least-load`, `prefix-aware`, and `cache+load-aware`.
+  12. Strict semantic separation between Gateway-side *estimated* token-prefix
+      affinity (`X-Estimated-Prefix-Affinity`) and real vLLM KV cache hits.
 """
 import asyncio
 from contextlib import asynccontextmanager
@@ -34,6 +35,8 @@ import httpx
 from gateway.admission import AdmissionController, AdmissionRejectedError
 from gateway.config import GatewayConfig
 from gateway.models import RequestContext
+from gateway.registry import ReplicaRegistry
+from gateway.router import InstanceRouter, NoHealthyReplicaError, RoutingPolicy
 
 logger = logging.getLogger("gateway")
 logging.basicConfig(
@@ -61,10 +64,29 @@ def create_gateway_app(
             max_connections=cfg.max_connections,
             max_keepalive_connections=cfg.max_keepalive_connections,
         )
+        resolved_replicas = cfg.resolved_replicas()
+        registry = ReplicaRegistry(
+            replicas=resolved_replicas,
+            circuit_breaker_failure_threshold=cfg.circuit_breaker_failure_threshold,
+            circuit_breaker_cooldown_seconds=cfg.circuit_breaker_cooldown_seconds,
+        )
+        router = InstanceRouter(
+            registry=registry,
+            policy=RoutingPolicy.from_str(cfg.routing_policy),
+            prefix_block_size=cfg.prefix_block_size,
+            prefix_weight=cfg.prefix_weight,
+            load_weight=cfg.load_weight,
+            hotspot_load_threshold=cfg.hotspot_load_threshold,
+            kv_hotspot_threshold=cfg.kv_hotspot_threshold,
+            kv_overload_threshold=cfg.kv_overload_threshold,
+            rng_seed=cfg.router_rng_seed,
+        )
+
         app.state.config = cfg
         app.state.admission = AdmissionController(cfg)
+        app.state.registry = registry
+        app.state.router = router
         app.state.http_client = httpx.AsyncClient(
-            base_url=cfg.backend_url,
             timeout=timeout,
             limits=limits,
             transport=transport,
@@ -72,8 +94,9 @@ def create_gateway_app(
         app.state.active_requests: Dict[str, RequestContext] = {}
         app.state.recent_requests: Dict[str, RequestContext] = {}
         logger.info(
-            "Gateway started (backend=%s, max_inflight=%d, queue_capacity=%d)",
-            cfg.backend_url,
+            "Gateway started (replicas=%d, policy=%s, max_inflight=%d, queue_capacity=%d)",
+            len(resolved_replicas),
+            router.policy.value,
             cfg.max_inflight,
             cfg.queue_capacity,
         )
@@ -83,7 +106,7 @@ def create_gateway_app(
             await app.state.http_client.aclose()
             logger.info("Gateway HTTP connection pool closed.")
 
-    app = FastAPI(title="vLLM Serving Gateway", version="0.2.0", lifespan=lifespan)
+    app = FastAPI(title="vLLM Serving Gateway", version="0.3.0", lifespan=lifespan)
 
     def _build_upstream_headers(request: Request, ctx: RequestContext) -> Dict[str, str]:
         headers: Dict[str, str] = {
@@ -138,6 +161,13 @@ def create_gateway_app(
             return cfg.default_deadline
         return None
 
+    def _release_replica_once(
+        registry: ReplicaRegistry, ctx: RequestContext, *, failed: bool = False
+    ) -> None:
+        if ctx.routed_replica_id is not None and not ctx.replica_released:
+            ctx.replica_released = True
+            registry.release_replica(ctx.routed_replica_id, failed=failed)
+
     @app.get("/health")
     async def health() -> Dict[str, str]:
         return {"status": "ok"}
@@ -147,13 +177,78 @@ def create_gateway_app(
         admission: AdmissionController = request.app.state.admission
         return admission.snapshot()
 
+    @app.get("/admin/routing")
+    async def routing_status(request: Request) -> Dict[str, Any]:
+        router: InstanceRouter = request.app.state.router
+        return router.snapshot()
+
+    @app.post("/admin/routing/policy")
+    async def set_routing_policy(request: Request) -> Response:
+        router: InstanceRouter = request.app.state.router
+        try:
+            payload = await request.json()
+            policy_name = payload.get("policy") if isinstance(payload, dict) else None
+            new_policy = router.set_policy(policy_name)
+        except Exception as exc:
+            return JSONResponse(
+                status_code=400,
+                content={"error": {"message": str(exc), "type": "invalid_policy"}},
+            )
+        return JSONResponse(
+            status_code=200,
+            content={"active_policy": new_policy.value},
+        )
+
+    @app.post("/admin/replicas/{replica_id}/health")
+    async def update_replica_health(replica_id: str, request: Request) -> Response:
+        registry: ReplicaRegistry = request.app.state.registry
+        try:
+            payload = await request.json()
+            healthy = bool(payload.get("healthy", True))
+            registry.set_health(replica_id, healthy)
+            replica = registry.get(replica_id)
+            return JSONResponse(status_code=200, content=replica.to_dict())
+        except KeyError as exc:
+            return JSONResponse(
+                status_code=404,
+                content={"error": {"message": str(exc), "type": "replica_not_found"}},
+            )
+        except Exception as exc:
+            return JSONResponse(
+                status_code=400,
+                content={"error": {"message": str(exc), "type": "invalid_request"}},
+            )
+
+    @app.post("/admin/replicas/sync-metrics")
+    async def sync_replicas_vllm_metrics(request: Request) -> Dict[str, Any]:
+        """Actively scrape real `/metrics` from every replica to sync vLLM ground truth."""
+        registry: ReplicaRegistry = request.app.state.registry
+        client: httpx.AsyncClient = request.app.state.http_client
+        results: Dict[str, Any] = {}
+        for replica in registry.all_replicas():
+            try:
+                resp = await client.get(f"{replica.endpoint}/metrics")
+                if resp.status_code == 200:
+                    results[replica.replica_id] = registry.update_from_vllm_metrics(
+                        replica.replica_id, resp.text
+                    )
+                else:
+                    results[replica.replica_id] = {
+                        "error": f"HTTP {resp.status_code}"
+                    }
+            except httpx.HTTPError as exc:
+                results[replica.replica_id] = {"error": str(exc)}
+        return {"synced_replicas": results}
+
     @app.get("/metrics")
     async def prometheus_metrics(request: Request) -> Response:
         admission: AdmissionController = request.app.state.admission
+        router: InstanceRouter = request.app.state.router
         snap = admission.snapshot()
+        r_snap = router.snapshot()
         m = snap["metrics"]
         lines = [
-            "# HELP gateway_in_flight Current number of requests executing on backend.",
+            "# HELP gateway_in_flight Current number of requests executing on backends.",
             "# TYPE gateway_in_flight gauge",
             f"gateway_in_flight {snap['in_flight']}",
             "# HELP gateway_queue_depth Current number of requests waiting in Gateway queue.",
@@ -180,7 +275,35 @@ def create_gateway_app(
             "# TYPE gateway_cancel_total counter",
             f'gateway_cancel_total{{stage="in_queue"}} {m["cancel"]["in_queue"]}',
             f'gateway_cancel_total{{stage="in_flight"}} {m["cancel"]["in_flight"]}',
+            "# HELP gateway_router_estimated_prefix_affinity_avg Estimated token-prefix affinity (Gateway estimate only, NOT real vLLM cache hits).",
+            "# TYPE gateway_router_estimated_prefix_affinity_avg gauge",
+            f"gateway_router_estimated_prefix_affinity_avg {r_snap['stats']['avg_estimated_prefix_affinity']}",
+            "# HELP gateway_replica_inflight Current in-flight requests per backend replica.",
+            "# TYPE gateway_replica_inflight gauge",
         ]
+        for rep in r_snap["registry"]["replicas"]:
+            rid = rep["replica_id"]
+            lines.append(f'gateway_replica_inflight{{replica="{rid}"}} {rep["inflight"]}')
+        lines.append("# HELP gateway_replica_healthy Health status per backend replica (1=available, 0=unavailable).")
+        lines.append("# TYPE gateway_replica_healthy gauge")
+        for rep in r_snap["registry"]["replicas"]:
+            rid = rep["replica_id"]
+            avail = 1 if rep["available"] else 0
+            lines.append(f'gateway_replica_healthy{{replica="{rid}"}} {avail}')
+        lines.append("# HELP gateway_router_decisions_total Total routing decisions by replica.")
+        lines.append("# TYPE gateway_router_decisions_total counter")
+        for rid, count in r_snap["stats"]["decisions_by_replica"].items():
+            lines.append(f'gateway_router_decisions_total{{replica="{rid}"}} {count}')
+        lines.append("# HELP gateway_replica_observed_vllm_prefix_cache_hit_rate Ground-truth vLLM prefix cache hit rate scraped from real vLLM /metrics.")
+        lines.append("# TYPE gateway_replica_observed_vllm_prefix_cache_hit_rate gauge")
+        for rep in r_snap["registry"]["replicas"]:
+            hit_rate = rep["observed_vllm_metrics"]["prefix_cache_hit_rate"]
+            if hit_rate is not None:
+                rid = rep["replica_id"]
+                lines.append(
+                    f'gateway_replica_observed_vllm_prefix_cache_hit_rate{{replica="{rid}"}} {hit_rate}'
+                )
+
         return Response(
             content="\n".join(lines) + "\n",
             media_type="text/plain; version=0.0.4",
@@ -190,15 +313,26 @@ def create_gateway_app(
     async def list_models(request: Request) -> Response:
         request_id = request.headers.get("X-Request-ID") or f"req-{uuid.uuid4().hex[:12]}"
         client: httpx.AsyncClient = request.app.state.http_client
+        registry: ReplicaRegistry = request.app.state.registry
         ctx = RequestContext(request_id=request_id, is_stream=False)
         headers = _build_upstream_headers(request, ctx)
+
+        avail = registry.available_replicas()
+        if not avail:
+            return _error_json_response(
+                503, "No healthy backend replicas available", "no_healthy_replicas", request_id
+            )
+        target_url = f"{avail[0].endpoint}/v1/models"
         try:
-            resp = await client.get("/v1/models", headers=headers)
+            resp = await client.get(target_url, headers=headers)
             return Response(
                 content=resp.content,
                 status_code=resp.status_code,
                 media_type=resp.headers.get("content-type", "application/json"),
-                headers={"X-Request-ID": request_id},
+                headers={
+                    "X-Request-ID": request_id,
+                    "X-Routed-Replica": avail[0].replica_id,
+                },
             )
         except httpx.TimeoutException as exc:
             return _error_json_response(
@@ -213,6 +347,8 @@ def create_gateway_app(
     async def chat_completions(request: Request) -> Response:
         request_id = request.headers.get("X-Request-ID") or f"req-{uuid.uuid4().hex[:12]}"
         admission: AdmissionController = request.app.state.admission
+        registry: ReplicaRegistry = request.app.state.registry
+        router: InstanceRouter = request.app.state.router
 
         # Parse and validate JSON body while still in NOT_STARTED state
         # Invalid requests are rejected BEFORE touching the admission queue or backend!
@@ -237,6 +373,16 @@ def create_gateway_app(
                 "invalid_request_error",
                 request_id,
             )
+
+        policy_override = request.headers.get("X-Routing-Policy")
+        if policy_override:
+            try:
+                RoutingPolicy.from_str(policy_override)
+            except ValueError as exc:
+                admission.record_invalid_request()
+                return _error_json_response(
+                    400, str(exc), "invalid_routing_policy", request_id
+                )
 
         is_stream = bool(body.get("stream", False))
         tenant_id = (
@@ -265,7 +411,7 @@ def create_gateway_app(
         request.app.state.recent_requests[request_id] = ctx
 
         # =====================================================================
-        # Step 2: Admission Control (Accept / Queue / Reject 429 or 503 or 504)
+        # M1 Step 2: Admission Control (Accept / Queue / Reject 429, 503, 504)
         # =====================================================================
         try:
             await admission.acquire_slot(ctx, request.is_disconnected)
@@ -305,6 +451,42 @@ def create_gateway_app(
                 request_id,
             )
 
+        # =====================================================================
+        # M2: Late-Binding Instance Selection (Filter -> Score -> Pick)
+        # Runs AFTER Admission Control so load signals are fresh & accurate!
+        # =====================================================================
+        try:
+            decision = router.select_replica(
+                request_id=request_id,
+                body=body,
+                policy_override=policy_override,
+            )
+        except NoHealthyReplicaError as exc:
+            admission.release_slot(ctx)
+            ctx.mark_finished(upstream_closed=True, error="no_healthy_replicas")
+            request.app.state.active_requests.pop(request_id, None)
+            return _error_json_response(
+                503,
+                str(exc),
+                "no_healthy_replicas",
+                request_id,
+                retry_after=1.0,
+            )
+
+        target_replica = decision.replica
+        registry.acquire_replica(target_replica.replica_id)
+        ctx.routed_replica_id = target_replica.replica_id
+        ctx.routing_policy = decision.policy.value
+        ctx.estimated_prefix_affinity = decision.estimated_prefix_affinity
+
+        routing_headers = {
+            "X-Request-ID": request_id,
+            "X-Queue-Wait-Ms": f"{ctx.queue_wait_ms:.2f}",
+            "X-Routed-Replica": target_replica.replica_id,
+            "X-Routing-Policy": decision.policy.value,
+            "X-Estimated-Prefix-Affinity": f"{decision.estimated_prefix_affinity:.4f}",
+        }
+
         effective_timeout = (
             min(cfg.read_timeout, rem_deadline)
             if rem_deadline is not None
@@ -313,14 +495,16 @@ def create_gateway_app(
 
         client: httpx.AsyncClient = request.app.state.http_client
         headers = _build_upstream_headers(request, ctx)
+        target_url = f"{target_replica.endpoint}/v1/chat/completions"
 
         # =====================================================================
         # Branch A: Non-streaming mode (stream=false)
         # =====================================================================
         if not is_stream:
+            failed = False
             try:
                 upstream_resp = await asyncio.wait_for(
-                    client.post("/v1/chat/completions", json=body, headers=headers),
+                    client.post(target_url, json=body, headers=headers),
                     timeout=effective_timeout,
                 )
                 ctx.mark_finished(upstream_closed=True)
@@ -330,12 +514,10 @@ def create_gateway_app(
                     media_type=upstream_resp.headers.get(
                         "content-type", "application/json"
                     ),
-                    headers={
-                        "X-Request-ID": request_id,
-                        "X-Queue-Wait-Ms": f"{ctx.queue_wait_ms:.2f}",
-                    },
+                    headers=routing_headers,
                 )
             except (httpx.TimeoutException, asyncio.TimeoutError) as exc:
+                failed = True
                 ctx.mark_finished(upstream_closed=True, error=f"timeout: {exc}")
                 return _error_json_response(
                     504,
@@ -344,6 +526,7 @@ def create_gateway_app(
                     request_id,
                 )
             except httpx.HTTPError as exc:
+                failed = True
                 ctx.mark_finished(upstream_closed=True, error=f"http_error: {exc}")
                 return _error_json_response(
                     502,
@@ -358,6 +541,7 @@ def create_gateway_app(
                 )
                 raise
             finally:
+                _release_replica_once(registry, ctx, failed=failed)
                 admission.release_slot(ctx)
                 request.app.state.active_requests.pop(request_id, None)
 
@@ -366,7 +550,7 @@ def create_gateway_app(
         # 3-State Machine: NOT_STARTED -> STREAMING -> FINISHED
         # =====================================================================
         upstream_req = client.build_request(
-            "POST", "/v1/chat/completions", json=body, headers=headers
+            "POST", target_url, json=body, headers=headers
         )
         upstream_resp: Optional[httpx.Response] = None
 
@@ -378,10 +562,13 @@ def create_gateway_app(
             )
 
             # If backend rejected request with non-200 status before streaming,
-            # read error body, close upstream stream, release slot, and return.
+            # read error body, close upstream stream, release replica & slot, and return.
             if upstream_resp.status_code != 200:
                 error_bytes = await upstream_resp.aread()
                 await upstream_resp.aclose()
+                _release_replica_once(
+                    registry, ctx, failed=(upstream_resp.status_code >= 500)
+                )
                 admission.release_slot(ctx)
                 ctx.mark_finished(
                     upstream_closed=True,
@@ -394,7 +581,7 @@ def create_gateway_app(
                     media_type=upstream_resp.headers.get(
                         "content-type", "application/json"
                     ),
-                    headers={"X-Request-ID": request_id},
+                    headers=routing_headers,
                 )
 
             # Peek the very first chunk while still in NOT_STARTED state!
@@ -413,6 +600,7 @@ def create_gateway_app(
         except StopAsyncIteration:
             if upstream_resp is not None:
                 await upstream_resp.aclose()
+            _release_replica_once(registry, ctx, failed=True)
             admission.release_slot(ctx)
             ctx.mark_finished(upstream_closed=True, error="empty_stream")
             request.app.state.active_requests.pop(request_id, None)
@@ -422,6 +610,7 @@ def create_gateway_app(
         except (httpx.TimeoutException, asyncio.TimeoutError) as exc:
             if upstream_resp is not None:
                 await upstream_resp.aclose()
+            _release_replica_once(registry, ctx, failed=True)
             admission.release_slot(ctx)
             ctx.mark_finished(upstream_closed=True, error=f"pre_stream_timeout: {exc}")
             request.app.state.active_requests.pop(request_id, None)
@@ -434,6 +623,7 @@ def create_gateway_app(
         except httpx.HTTPError as exc:
             if upstream_resp is not None:
                 await upstream_resp.aclose()
+            _release_replica_once(registry, ctx, failed=True)
             admission.release_slot(ctx)
             ctx.mark_finished(upstream_closed=True, error=f"pre_stream_error: {exc}")
             request.app.state.active_requests.pop(request_id, None)
@@ -447,6 +637,7 @@ def create_gateway_app(
             if upstream_resp is not None:
                 await upstream_resp.aclose()
             admission.record_inflight_cancel()
+            _release_replica_once(registry, ctx, failed=False)
             admission.release_slot(ctx)
             ctx.mark_finished(
                 upstream_closed=True,
@@ -528,11 +719,12 @@ def create_gateway_app(
                 )
                 yield f"data: {err_payload}\n\ndata: [DONE]\n\n".encode("utf-8")
             finally:
-                # Phase 3 (FINISHED): Always close upstream stream AND release
-                # the in-flight admission slot so the next queued request wakes up!
+                # Phase 3 (FINISHED): Always close upstream stream, release replica
+                # in-flight count, AND release the admission slot!
                 await upstream_resp.aclose()
                 if client_left:
                     admission.record_inflight_cancel()
+                _release_replica_once(registry, ctx, failed=(stream_err is not None))
                 admission.release_slot(ctx)
                 ctx.mark_finished(
                     upstream_closed=True,
@@ -546,8 +738,7 @@ def create_gateway_app(
             status_code=200,
             media_type="text/event-stream",
             headers={
-                "X-Request-ID": request_id,
-                "X-Queue-Wait-Ms": f"{ctx.queue_wait_ms:.2f}",
+                **routing_headers,
                 "Cache-Control": "no-cache",
                 "Connection": "keep-alive",
                 "X-Accel-Buffering": "no",

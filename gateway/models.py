@@ -28,7 +28,7 @@ class RequestState(str, Enum):
 
 @dataclass
 class RequestContext:
-    """Tracks the lifecycle, admission queueing, timing, and cleanup of a request."""
+    """Tracks the lifecycle, admission queueing, routing, timing, and cleanup of a request."""
 
     request_id: str
     is_stream: bool
@@ -45,6 +45,13 @@ class RequestContext:
     was_queued: bool = False
     slot_acquired: bool = False
     slot_released: bool = False
+
+    # M2 routing metadata (explicitly separating estimated affinity from real cache hits)
+    routed_replica_id: Optional[str] = None
+    routing_policy: Optional[str] = None
+    estimated_prefix_affinity: float = 0.0
+    replica_released: bool = False
+
     chunks_forwarded: int = 0
     client_disconnected: bool = False
     upstream_closed: bool = False

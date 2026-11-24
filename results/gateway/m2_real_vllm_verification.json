@@ -1,0 +1,71 @@
+{
+  "hardware_note": "Single-GPU RTX 5080 Laptop real vLLM verification (verifies real APC behavior & TTFT speedup; not multi-GPU cluster TPS).",
+  "backend_url": "http://localhost:8000",
+  "served_model": "qwen2.5-7b-instruct-fp8",
+  "routing_policy": "cache+load-aware",
+  "cold_turn_ttft_ms": 1682.28,
+  "warm_turns_ttft_ms": [
+    86.54,
+    76.08,
+    77.3
+  ],
+  "warm_turns_ttft_avg_ms": 79.97,
+  "ttft_speedup_ratio": 21.04,
+  "gateway_estimated_warm_affinity_avg": 0.9971,
+  "real_vllm_ground_truth_delta": {
+    "prefix_cache_queries_delta": 8740.0,
+    "prefix_cache_hits_delta": 6480.0,
+    "observed_vllm_delta_hit_rate": 0.7414,
+    "kv_cache_usage_perc_after": 0.0
+  },
+  "turns": [
+    {
+      "request_id": "m2-real-turn-0",
+      "status_code": 200,
+      "ttft_ms": 1682.28,
+      "e2e_ms": 1795.4,
+      "sse_chunks": 12,
+      "routed_replica": "replica-rtx5080",
+      "routing_policy": "cache+load-aware",
+      "gateway_estimated_prefix_affinity": 0.0,
+      "turn": 0,
+      "phase": "cold"
+    },
+    {
+      "request_id": "m2-real-turn-1",
+      "status_code": 200,
+      "ttft_ms": 86.54,
+      "e2e_ms": 201.87,
+      "sse_chunks": 12,
+      "routed_replica": "replica-rtx5080",
+      "routing_policy": "cache+load-aware",
+      "gateway_estimated_prefix_affinity": 0.9912,
+      "turn": 1,
+      "phase": "warm"
+    },
+    {
+      "request_id": "m2-real-turn-2",
+      "status_code": 200,
+      "ttft_ms": 76.08,
+      "e2e_ms": 271.72,
+      "sse_chunks": 18,
+      "routed_replica": "replica-rtx5080",
+      "routing_policy": "cache+load-aware",
+      "gateway_estimated_prefix_affinity": 1.0,
+      "turn": 2,
+      "phase": "warm"
+    },
+    {
+      "request_id": "m2-real-turn-3",
+      "status_code": 200,
+      "ttft_ms": 77.3,
+      "e2e_ms": 271.89,
+      "sse_chunks": 18,
+      "routed_replica": "replica-rtx5080",
+      "routing_policy": "cache+load-aware",
+      "gateway_estimated_prefix_affinity": 1.0,
+      "turn": 3,
+      "phase": "warm"
+    }
+  ]
+}
