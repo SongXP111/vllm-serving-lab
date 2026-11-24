@@ -20,3 +20,10 @@ scrape_configs:
     scrape_timeout: 4s
     static_configs:
       - targets: ['gpu-exporter:9835']
+
+  - job_name: 'gateway'
+    metrics_path: '/metrics'
+    scrape_interval: 5s
+    scrape_timeout: 4s
+    static_configs:
+      - targets: ['host.docker.internal:8080']

@@ -1,0 +1,206 @@
+{
+  "timestamp": "2026-11-24T03:46:24.971310+00:00",
+  "run_label": "baseline_inflight_2",
+  "experiment_controls": {
+    "seed": 42,
+    "arrival_distribution": "poisson(rate=10.0 rps)",
+    "num_requests": 20,
+    "input_sections": 12,
+    "unique_prefix_ratio": 1.0,
+    "max_tokens": 96,
+    "gateway_max_inflight": 2,
+    "gateway_queue_capacity": 40,
+    "routing_policy": "cache+load-aware",
+    "slo_thresholds": {
+      "ttft_ms": 1800.0,
+      "tpot_ms": 20.0,
+      "e2e_ms": 4000.0
+    },
+    "cost_assumption": "Assumed $1.50/GPU-hr for relative cost-per-1M-tokens modeling ONLY (NOT real cloud billing)."
+  },
+  "model": {
+    "model_name": "qwen2.5-7b-instruct-fp8",
+    "dtype": "FP8 (Dynamic)",
+    "gpu": "NVIDIA GeForce RTX 5080 Laptop GPU"
+  },
+  "benchmarks": [
+    {
+      "workload": "poisson_1300in_96out",
+      "concurrency": 1,
+      "num_requests": 20,
+      "completed_200": 20,
+      "rejected_429_503": 0,
+      "errors_other": 0,
+      "wall_time_sec": 17.77,
+      "output_tokens_total": 1920,
+      "output_tps": 108.05,
+      "raw_rps": 1.13,
+      "goodput_count": 2,
+      "goodput_rps": 0.11,
+      "goodput_ratio_pct": 10.0,
+      "p50_queue_wait_ms": 6688.0,
+      "p99_queue_wait_ms": 14422.0,
+      "p50_ttft_ms": 7087.83,
+      "p99_ttft_ms": 14824.39,
+      "p50_tpot_ms": 14.82,
+      "p99_tpot_ms": 17.03,
+      "p50_itl_ms": 13.18,
+      "p99_itl_ms": 99.91,
+      "p50_e2e_ms": 8401.1,
+      "p99_e2e_ms": 16095.92,
+      "reject_rate_pct": 0.0,
+      "error_rate_pct": 0.0,
+      "peak_vram_mib": 15756.0,
+      "total_vram_mib": 16303.0,
+      "mean_gpu_util_pct": 92.8,
+      "cost_per_million_tokens_usd": 3.8562,
+      "actual_gateway_max_inflight": 2
+    }
+  ],
+  "gateway_histograms": {
+    "queue_wait": {
+      "count": 21,
+      "sum_seconds": 147.346,
+      "avg_ms": 7016.48,
+      "p50_ms": 6688.0,
+      "p95_ms": 14407.0,
+      "p99_ms": 14422.0
+    },
+    "ttft": {
+      "count": 21,
+      "sum_seconds": 154.624,
+      "avg_ms": 7363.05,
+      "p50_ms": 7078.0,
+      "p95_ms": 14641.0,
+      "p99_ms": 14813.0
+    },
+    "itl": {
+      "count": 1923,
+      "sum_seconds": 28.207,
+      "avg_ms": 14.67,
+      "p50_ms": 15.0,
+      "p95_ms": 31.0,
+      "p99_ms": 109.0
+    },
+    "e2e": {
+      "count": 21,
+      "sum_seconds": 182.877,
+      "avg_ms": 8708.43,
+      "p50_ms": 8407.0,
+      "p95_ms": 16079.0,
+      "p99_ms": 16094.0
+    }
+  },
+  "sample_correlated_traces": [
+    {
+      "gateway_request_id": "baseline_inflight_2-req-015",
+      "traceparent": "00-a9cf55ebc3534095b7e8f926d2b30c42-8e41e83df6374ab1-01",
+      "tenant_id": "default",
+      "priority": "normal",
+      "is_stream": true,
+      "status_code": 200,
+      "routing_policy": "cache+load-aware",
+      "backend_replica_id": "replica-rtx5080",
+      "backend_endpoint": "http://localhost:8000",
+      "backend_request_id": "chatcmpl-baseline_inflight_2-req-015",
+      "estimated_prefix_affinity": 0.0149,
+      "queue_wait_ms": 11250.0,
+      "ttft_ms": 11734.0,
+      "itl_avg_ms": 13.35,
+      "itl_p99_ms": 94.0,
+      "e2e_ms": 13016.0,
+      "output_chunks": 98,
+      "error": null
+    },
+    {
+      "gateway_request_id": "baseline_inflight_2-req-016",
+      "traceparent": "00-eb5fc845c1ae4b9098f3fdd36b31467d-e214d0113ac042c8-01",
+      "tenant_id": "default",
+      "priority": "normal",
+      "is_stream": true,
+      "status_code": 200,
+      "routing_policy": "cache+load-aware",
+      "backend_replica_id": "replica-rtx5080",
+      "backend_endpoint": "http://localhost:8000",
+      "backend_request_id": "chatcmpl-baseline_inflight_2-req-016",
+      "estimated_prefix_affinity": 0.0149,
+      "queue_wait_ms": 12938.0,
+      "ttft_ms": 13234.0,
+      "itl_avg_ms": 14.66,
+      "itl_p99_ms": 141.0,
+      "e2e_ms": 14641.0,
+      "output_chunks": 98,
+      "error": null
+    },
+    {
+      "gateway_request_id": "baseline_inflight_2-req-017",
+      "traceparent": "00-11be52c51d224b4283bc0e2afaa877f5-5257efd2fa534901-01",
+      "tenant_id": "default",
+      "priority": "normal",
+      "is_stream": true,
+      "status_code": 200,
+      "routing_policy": "cache+load-aware",
+      "backend_replica_id": "replica-rtx5080",
+      "backend_endpoint": "http://localhost:8000",
+      "backend_request_id": "chatcmpl-baseline_inflight_2-req-017",
+      "estimated_prefix_affinity": 0.0149,
+      "queue_wait_ms": 12797.0,
+      "ttft_ms": 13234.0,
+      "itl_avg_ms": 13.34,
+      "itl_p99_ms": 125.0,
+      "e2e_ms": 14515.0,
+      "output_chunks": 98,
+      "error": null
+    }
+  ],
+  "vllm_metrics_delta": {
+    "prefix_cache_queries_delta": 29990.0,
+    "prefix_cache_hits_delta": 304.0,
+    "observed_prefix_cache_hit_rate_delta": 0.0101
+  },
+  "vllm_metrics_snapshot": {
+    "replica-rtx5080": {
+      "replica_id": "replica-rtx5080",
+      "endpoint": "http://localhost:8000",
+      "healthy": true,
+      "available": true,
+      "inflight": 0,
+      "max_inflight": 2,
+      "backend_waiting_queue": 0,
+      "backend_running_requests": 0,
+      "kv_cache_usage_perc": 0.0,
+      "kv_cache_capacity_blocks": 2048,
+      "load_ratio": 0.0,
+      "consecutive_failures": 0,
+      "circuit_open": false,
+      "total_dispatched": 21,
+      "total_completed": 21,
+      "total_errors": 0,
+      "max_observed_inflight": 2,
+      "observed_vllm_metrics": {
+        "synced": true,
+        "prefix_cache_queries": 30022.0,
+        "prefix_cache_hits": 304.0,
+        "prefix_cache_hit_rate": 0.0101
+      }
+    }
+  },
+  "gateway_prometheus_excerpt": [
+    "gateway_requests_total{status_code=\"200\",stream=\"true\",policy=\"cache+load-aware\"} 21",
+    "gateway_inflight_requests 0",
+    "gateway_queue_depth 0",
+    "gateway_queue_wait_seconds_sum 147.346000",
+    "gateway_queue_wait_seconds_count 21",
+    "gateway_ttft_seconds_sum 154.624000",
+    "gateway_ttft_seconds_count 21",
+    "gateway_itl_seconds_sum 28.207000",
+    "gateway_itl_seconds_count 1923",
+    "gateway_rejections_total{reason=\"invalid_400\"} 0",
+    "gateway_rejections_total{reason=\"quota_429\"} 0",
+    "gateway_rejections_total{reason=\"rate_limit_429\"} 0",
+    "gateway_rejections_total{reason=\"queue_full_503\"} 0",
+    "gateway_rejections_total{reason=\"queue_timeout_503\"} 0",
+    "gateway_rejections_total{reason=\"deadline_504\"} 0",
+    "gateway_router_policy_selections_total{policy=\"cache+load-aware\"} 21"
+  ]
+}

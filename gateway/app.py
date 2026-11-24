@@ -1,4 +1,4 @@
-"""Production-style Async LLM Serving Gateway (M1 Step 1/2 & M2 Multi-Replica Routing).
+"""Production-style Async LLM Serving Gateway (M1, M2 & Step 4 Observability).
 
 Responsibilities:
 - M1 Step 1:
@@ -18,14 +18,22 @@ Responsibilities:
       backend queue & KV capacity hints, plus real observed vLLM metrics.
   11. `InstanceRouter` (`Filter -> Score -> Pick`) with four switchable policies:
       `random`, `least-load`, `prefix-aware`, and `cache+load-aware`.
-  12. Strict semantic separation between Gateway-side *estimated* token-prefix
-      affinity (`X-Estimated-Prefix-Affinity`) and real vLLM KV cache hits.
+- Step 4 (Observability & Evidence Chain):
+  12. Standard Prometheus Counter / Gauge / Histogram metrics:
+      `gateway_requests_total`, `gateway_queue_depth`, `gateway_queue_wait_seconds`,
+      `gateway_inflight_requests`, `gateway_rejections_total`,
+      `gateway_router_policy_selections_total`, `gateway_router_decisions_total`,
+      `gateway_ttft_seconds`, `gateway_itl_seconds`, `gateway_e2e_seconds`.
+  13. End-to-end request correlation (`gateway_request_id` <-> `backend_request_id`
+      + W3C `traceparent` propagation & `/admin/traces`).
 """
 import asyncio
 from contextlib import asynccontextmanager
 import json
 import logging
-from typing import Any, AsyncIterator, Dict, Optional
+import math
+import time
+from typing import Any, AsyncIterator, Dict, List, Optional
 import uuid
 
 from fastapi import FastAPI, Request
@@ -34,6 +42,7 @@ import httpx
 
 from gateway.admission import AdmissionController, AdmissionRejectedError
 from gateway.config import GatewayConfig
+from gateway.metrics import GatewayMetricsCollector, RequestTraceRecord
 from gateway.models import RequestContext
 from gateway.registry import ReplicaRegistry
 from gateway.router import InstanceRouter, NoHealthyReplicaError, RoutingPolicy
@@ -43,6 +52,42 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
 )
+
+
+def _ensure_traceparent(incoming: Optional[str]) -> str:
+    """Propagate incoming W3C traceparent or synthesize a fresh 00-<trace>-<span>-01."""
+    if incoming and len(incoming.split("-")) == 4:
+        return incoming.strip()
+    trace_id = uuid.uuid4().hex
+    span_id = uuid.uuid4().hex[:16]
+    return f"00-{trace_id}-{span_id}-01"
+
+
+def _extract_backend_request_id_from_bytes(
+    payload: bytes, *, is_sse: bool
+) -> Optional[str]:
+    """Extract backend vLLM completion ID (e.g. `chatcmpl-...`) from JSON or SSE bytes."""
+    if not payload:
+        return None
+    try:
+        text = payload.decode("utf-8", errors="ignore")
+        if not is_sse:
+            obj = json.loads(text)
+            if isinstance(obj, dict) and obj.get("id"):
+                return str(obj["id"])
+            return None
+        for raw_line in text.splitlines():
+            line = raw_line.strip()
+            if line.startswith("data:") and "[DONE]" not in line:
+                json_part = line[5:].strip()
+                if not json_part:
+                    continue
+                obj = json.loads(json_part)
+                if isinstance(obj, dict) and obj.get("id"):
+                    return str(obj["id"])
+    except Exception:
+        return None
+    return None
 
 
 def create_gateway_app(
@@ -86,6 +131,7 @@ def create_gateway_app(
         app.state.admission = AdmissionController(cfg)
         app.state.registry = registry
         app.state.router = router
+        app.state.metrics = GatewayMetricsCollector()
         app.state.http_client = httpx.AsyncClient(
             timeout=timeout,
             limits=limits,
@@ -106,11 +152,13 @@ def create_gateway_app(
             await app.state.http_client.aclose()
             logger.info("Gateway HTTP connection pool closed.")
 
-    app = FastAPI(title="vLLM Serving Gateway", version="0.3.0", lifespan=lifespan)
+    app = FastAPI(title="vLLM Serving Gateway", version="0.4.0", lifespan=lifespan)
 
     def _build_upstream_headers(request: Request, ctx: RequestContext) -> Dict[str, str]:
         headers: Dict[str, str] = {
             "X-Request-ID": ctx.request_id,
+            "X-Gateway-Request-ID": ctx.request_id,
+            "traceparent": ctx.traceparent,
             "X-Tenant-ID": ctx.tenant_id,
             "X-Priority": ctx.priority,
             "Content-Type": "application/json",
@@ -128,8 +176,14 @@ def create_gateway_app(
         error_type: str,
         request_id: str,
         retry_after: Optional[float] = None,
+        traceparent: Optional[str] = None,
     ) -> JSONResponse:
-        headers: Dict[str, str] = {"X-Request-ID": request_id}
+        headers: Dict[str, str] = {
+            "X-Request-ID": request_id,
+            "X-Gateway-Request-ID": request_id,
+        }
+        if traceparent:
+            headers["traceparent"] = traceparent
         if retry_after is not None:
             headers["Retry-After"] = str(retry_after)
         return JSONResponse(
@@ -168,6 +222,56 @@ def create_gateway_app(
             ctx.replica_released = True
             registry.release_replica(ctx.routed_replica_id, failed=failed)
 
+    def _record_observability(
+        metrics: GatewayMetricsCollector,
+        ctx: RequestContext,
+        *,
+        status_code: int,
+        ttft_ms: Optional[float] = None,
+        itl_samples_ms: Optional[List[float]] = None,
+    ) -> None:
+        end_ts = ctx.finished_at or time.monotonic()
+        e2e_ms = max(0.0, (end_ts - ctx.created_at) * 1000.0)
+        metrics.record_request_completed(
+            status_code=status_code,
+            is_stream=ctx.is_stream,
+            policy=ctx.routing_policy,
+            queue_wait_ms=ctx.queue_wait_ms,
+            e2e_ms=e2e_ms,
+            ttft_ms=ttft_ms,
+            itl_samples_ms=itl_samples_ms,
+        )
+        itl_avg: Optional[float] = None
+        itl_p99: Optional[float] = None
+        if itl_samples_ms:
+            itl_avg = sum(itl_samples_ms) / len(itl_samples_ms)
+            ordered = sorted(itl_samples_ms)
+            idx = min(len(ordered) - 1, max(0, math.ceil(0.99 * len(ordered)) - 1))
+            itl_p99 = ordered[idx]
+
+        trace = RequestTraceRecord(
+            gateway_request_id=ctx.request_id,
+            traceparent=ctx.traceparent,
+            tenant_id=ctx.tenant_id,
+            priority=ctx.priority,
+            is_stream=ctx.is_stream,
+            status_code=status_code,
+            routing_policy=ctx.routing_policy,
+            backend_replica_id=ctx.routed_replica_id,
+            backend_endpoint=ctx.routed_endpoint,
+            backend_request_id=ctx.backend_request_id,
+            estimated_prefix_affinity=ctx.estimated_prefix_affinity,
+            queue_wait_ms=ctx.queue_wait_ms,
+            ttft_ms=ttft_ms,
+            itl_avg_ms=itl_avg,
+            itl_p99_ms=itl_p99,
+            e2e_ms=e2e_ms,
+            output_chunks=ctx.chunks_forwarded,
+            error=ctx.error,
+        )
+        metrics.record_trace(trace)
+        logger.info("request_trace %s", json.dumps(trace.to_dict(), ensure_ascii=False))
+
     @app.get("/health")
     async def health() -> Dict[str, str]:
         return {"status": "ok"}
@@ -181,6 +285,32 @@ def create_gateway_app(
     async def routing_status(request: Request) -> Dict[str, Any]:
         router: InstanceRouter = request.app.state.router
         return router.snapshot()
+
+    @app.get("/admin/traces")
+    async def list_traces(request: Request, limit: int = 50) -> Dict[str, Any]:
+        metrics: GatewayMetricsCollector = request.app.state.metrics
+        items = [t.to_dict() for t in list(metrics.traces)[-max(1, limit) :]]
+        return {
+            "count": len(items),
+            "histograms": metrics.snapshot()["histograms"],
+            "traces": items,
+        }
+
+    @app.get("/admin/traces/{gateway_request_id}")
+    async def get_trace_by_id(gateway_request_id: str, request: Request) -> Response:
+        metrics: GatewayMetricsCollector = request.app.state.metrics
+        trace = metrics.traces_by_id.get(gateway_request_id)
+        if trace is None:
+            return JSONResponse(
+                status_code=404,
+                content={
+                    "error": {
+                        "message": f"Trace not found for gateway_request_id={gateway_request_id}",
+                        "type": "trace_not_found",
+                    }
+                },
+            )
+        return JSONResponse(status_code=200, content=trace.to_dict())
 
     @app.post("/admin/routing/policy")
     async def set_routing_policy(request: Request) -> Response:
@@ -244,83 +374,35 @@ def create_gateway_app(
     async def prometheus_metrics(request: Request) -> Response:
         admission: AdmissionController = request.app.state.admission
         router: InstanceRouter = request.app.state.router
-        snap = admission.snapshot()
-        r_snap = router.snapshot()
-        m = snap["metrics"]
-        lines = [
-            "# HELP gateway_in_flight Current number of requests executing on backends.",
-            "# TYPE gateway_in_flight gauge",
-            f"gateway_in_flight {snap['in_flight']}",
-            "# HELP gateway_queue_depth Current number of requests waiting in Gateway queue.",
-            "# TYPE gateway_queue_depth gauge",
-            f"gateway_queue_depth {m['queue_depth']['current']}",
-            "# HELP gateway_queue_depth_max_observed Peak observed Gateway queue depth.",
-            "# TYPE gateway_queue_depth_max_observed gauge",
-            f"gateway_queue_depth_max_observed {m['queue_depth']['max_observed']}",
-            "# HELP gateway_queue_wait_avg_ms Average queue wait time in ms for queued requests.",
-            "# TYPE gateway_queue_wait_avg_ms gauge",
-            f"gateway_queue_wait_avg_ms {m['queue_wait']['avg_queued_wait_ms']}",
-            "# HELP gateway_queue_wait_max_ms Max observed queue wait time in ms.",
-            "# TYPE gateway_queue_wait_max_ms gauge",
-            f"gateway_queue_wait_max_ms {m['queue_wait']['max_wait_ms']}",
-            "# HELP gateway_reject_total Total rejected requests before entering inference.",
-            "# TYPE gateway_reject_total counter",
-            f'gateway_reject_total{{reason="invalid_400"}} {m["reject"]["invalid_400"]}',
-            f'gateway_reject_total{{reason="quota_429"}} {m["reject"]["quota_429"]}',
-            f'gateway_reject_total{{reason="rate_limit_429"}} {m["reject"]["rate_limit_429"]}',
-            f'gateway_reject_total{{reason="queue_full_503"}} {m["reject"]["queue_full_503"]}',
-            f'gateway_reject_total{{reason="queue_timeout_503"}} {m["reject"]["queue_timeout_503"]}',
-            f'gateway_reject_total{{reason="deadline_504"}} {m["reject"]["deadline_504"]}',
-            "# HELP gateway_cancel_total Total cancelled requests by lifecycle stage.",
-            "# TYPE gateway_cancel_total counter",
-            f'gateway_cancel_total{{stage="in_queue"}} {m["cancel"]["in_queue"]}',
-            f'gateway_cancel_total{{stage="in_flight"}} {m["cancel"]["in_flight"]}',
-            "# HELP gateway_router_estimated_prefix_affinity_avg Estimated token-prefix affinity (Gateway estimate only, NOT real vLLM cache hits).",
-            "# TYPE gateway_router_estimated_prefix_affinity_avg gauge",
-            f"gateway_router_estimated_prefix_affinity_avg {r_snap['stats']['avg_estimated_prefix_affinity']}",
-            "# HELP gateway_replica_inflight Current in-flight requests per backend replica.",
-            "# TYPE gateway_replica_inflight gauge",
-        ]
-        for rep in r_snap["registry"]["replicas"]:
-            rid = rep["replica_id"]
-            lines.append(f'gateway_replica_inflight{{replica="{rid}"}} {rep["inflight"]}')
-        lines.append("# HELP gateway_replica_healthy Health status per backend replica (1=available, 0=unavailable).")
-        lines.append("# TYPE gateway_replica_healthy gauge")
-        for rep in r_snap["registry"]["replicas"]:
-            rid = rep["replica_id"]
-            avail = 1 if rep["available"] else 0
-            lines.append(f'gateway_replica_healthy{{replica="{rid}"}} {avail}')
-        lines.append("# HELP gateway_router_decisions_total Total routing decisions by replica.")
-        lines.append("# TYPE gateway_router_decisions_total counter")
-        for rid, count in r_snap["stats"]["decisions_by_replica"].items():
-            lines.append(f'gateway_router_decisions_total{{replica="{rid}"}} {count}')
-        lines.append("# HELP gateway_replica_observed_vllm_prefix_cache_hit_rate Ground-truth vLLM prefix cache hit rate scraped from real vLLM /metrics.")
-        lines.append("# TYPE gateway_replica_observed_vllm_prefix_cache_hit_rate gauge")
-        for rep in r_snap["registry"]["replicas"]:
-            hit_rate = rep["observed_vllm_metrics"]["prefix_cache_hit_rate"]
-            if hit_rate is not None:
-                rid = rep["replica_id"]
-                lines.append(
-                    f'gateway_replica_observed_vllm_prefix_cache_hit_rate{{replica="{rid}"}} {hit_rate}'
-                )
-
+        metrics: GatewayMetricsCollector = request.app.state.metrics
+        body_text = metrics.render_prometheus(
+            admission_snapshot=admission.snapshot(),
+            router_snapshot=router.snapshot(),
+        )
         return Response(
-            content="\n".join(lines) + "\n",
+            content=body_text,
             media_type="text/plain; version=0.0.4",
         )
 
     @app.get("/v1/models")
     async def list_models(request: Request) -> Response:
         request_id = request.headers.get("X-Request-ID") or f"req-{uuid.uuid4().hex[:12]}"
+        traceparent = _ensure_traceparent(request.headers.get("traceparent"))
         client: httpx.AsyncClient = request.app.state.http_client
         registry: ReplicaRegistry = request.app.state.registry
-        ctx = RequestContext(request_id=request_id, is_stream=False)
+        ctx = RequestContext(
+            request_id=request_id, is_stream=False, traceparent=traceparent
+        )
         headers = _build_upstream_headers(request, ctx)
 
         avail = registry.available_replicas()
         if not avail:
             return _error_json_response(
-                503, "No healthy backend replicas available", "no_healthy_replicas", request_id
+                503,
+                "No healthy backend replicas available",
+                "no_healthy_replicas",
+                request_id,
+                traceparent=traceparent,
             )
         target_url = f"{avail[0].endpoint}/v1/models"
         try:
@@ -331,33 +413,60 @@ def create_gateway_app(
                 media_type=resp.headers.get("content-type", "application/json"),
                 headers={
                     "X-Request-ID": request_id,
+                    "X-Gateway-Request-ID": request_id,
+                    "traceparent": traceparent,
                     "X-Routed-Replica": avail[0].replica_id,
                 },
             )
         except httpx.TimeoutException as exc:
             return _error_json_response(
-                504, f"Backend timeout on /v1/models: {exc}", "gateway_timeout", request_id
+                504,
+                f"Backend timeout on /v1/models: {exc}",
+                "gateway_timeout",
+                request_id,
+                traceparent=traceparent,
             )
         except httpx.HTTPError as exc:
             return _error_json_response(
-                502, f"Backend unreachable on /v1/models: {exc}", "bad_gateway", request_id
+                502,
+                f"Backend unreachable on /v1/models: {exc}",
+                "bad_gateway",
+                request_id,
+                traceparent=traceparent,
             )
 
     @app.post("/v1/chat/completions")
     async def chat_completions(request: Request) -> Response:
-        request_id = request.headers.get("X-Request-ID") or f"req-{uuid.uuid4().hex[:12]}"
+        request_id = (
+            request.headers.get("X-Gateway-Request-ID")
+            or request.headers.get("X-Request-ID")
+            or f"req-{uuid.uuid4().hex[:12]}"
+        )
+        traceparent = _ensure_traceparent(request.headers.get("traceparent"))
         admission: AdmissionController = request.app.state.admission
         registry: ReplicaRegistry = request.app.state.registry
         router: InstanceRouter = request.app.state.router
+        metrics: GatewayMetricsCollector = request.app.state.metrics
 
         # Parse and validate JSON body while still in NOT_STARTED state
-        # Invalid requests are rejected BEFORE touching the admission queue or backend!
         try:
             body = await request.json()
         except Exception as exc:
             admission.record_invalid_request()
+            invalid_ctx = RequestContext(
+                request_id=request_id,
+                is_stream=False,
+                traceparent=traceparent,
+                error="invalid_request_error",
+            )
+            invalid_ctx.mark_finished(upstream_closed=True, error="invalid_request_error")
+            _record_observability(metrics, invalid_ctx, status_code=400)
             return _error_json_response(
-                400, f"Invalid JSON request body: {exc}", "invalid_request_error", request_id
+                400,
+                f"Invalid JSON request body: {exc}",
+                "invalid_request_error",
+                request_id,
+                traceparent=traceparent,
             )
 
         if (
@@ -367,11 +476,20 @@ def create_gateway_app(
             or not isinstance(body.get("messages"), list)
         ):
             admission.record_invalid_request()
+            invalid_ctx = RequestContext(
+                request_id=request_id,
+                is_stream=False,
+                traceparent=traceparent,
+                error="invalid_request_error",
+            )
+            invalid_ctx.mark_finished(upstream_closed=True, error="invalid_request_error")
+            _record_observability(metrics, invalid_ctx, status_code=400)
             return _error_json_response(
                 400,
                 "Invalid request schema: 'model' (str) and 'messages' (list) are required",
                 "invalid_request_error",
                 request_id,
+                traceparent=traceparent,
             )
 
         policy_override = request.headers.get("X-Routing-Policy")
@@ -380,8 +498,22 @@ def create_gateway_app(
                 RoutingPolicy.from_str(policy_override)
             except ValueError as exc:
                 admission.record_invalid_request()
+                invalid_ctx = RequestContext(
+                    request_id=request_id,
+                    is_stream=bool(body.get("stream", False)),
+                    traceparent=traceparent,
+                    error="invalid_routing_policy",
+                )
+                invalid_ctx.mark_finished(
+                    upstream_closed=True, error="invalid_routing_policy"
+                )
+                _record_observability(metrics, invalid_ctx, status_code=400)
                 return _error_json_response(
-                    400, str(exc), "invalid_routing_policy", request_id
+                    400,
+                    str(exc),
+                    "invalid_routing_policy",
+                    request_id,
+                    traceparent=traceparent,
                 )
 
         is_stream = bool(body.get("stream", False))
@@ -402,6 +534,7 @@ def create_gateway_app(
             is_stream=is_stream,
             tenant_id=str(tenant_id),
             priority=str(priority),
+            traceparent=traceparent,
         )
         deadline_sec = _extract_deadline_seconds(request, body)
         if deadline_sec is not None:
@@ -422,12 +555,14 @@ def create_gateway_app(
                 error=exc.error_type,
             )
             request.app.state.active_requests.pop(request_id, None)
+            _record_observability(metrics, ctx, status_code=exc.status_code)
             return _error_json_response(
                 exc.status_code,
                 exc.message,
                 exc.error_type,
                 request_id,
                 retry_after=exc.retry_after,
+                traceparent=traceparent,
             )
         except asyncio.CancelledError:
             ctx.mark_finished(
@@ -436,6 +571,7 @@ def create_gateway_app(
                 error="cancelled_in_queue",
             )
             request.app.state.active_requests.pop(request_id, None)
+            _record_observability(metrics, ctx, status_code=499)
             raise
 
         # Check remaining deadline right after acquiring an in-flight slot
@@ -444,16 +580,17 @@ def create_gateway_app(
             admission.release_slot(ctx)
             ctx.mark_finished(upstream_closed=True, error="deadline_exceeded")
             request.app.state.active_requests.pop(request_id, None)
+            _record_observability(metrics, ctx, status_code=504)
             return _error_json_response(
                 504,
                 "Request deadline expired immediately after queue wait",
                 "deadline_exceeded",
                 request_id,
+                traceparent=traceparent,
             )
 
         # =====================================================================
         # M2: Late-Binding Instance Selection (Filter -> Score -> Pick)
-        # Runs AFTER Admission Control so load signals are fresh & accurate!
         # =====================================================================
         try:
             decision = router.select_replica(
@@ -465,22 +602,30 @@ def create_gateway_app(
             admission.release_slot(ctx)
             ctx.mark_finished(upstream_closed=True, error="no_healthy_replicas")
             request.app.state.active_requests.pop(request_id, None)
+            _record_observability(metrics, ctx, status_code=503)
             return _error_json_response(
                 503,
                 str(exc),
                 "no_healthy_replicas",
                 request_id,
                 retry_after=1.0,
+                traceparent=traceparent,
             )
 
         target_replica = decision.replica
         registry.acquire_replica(target_replica.replica_id)
+        metrics.record_routing_decision(
+            decision.policy.value, target_replica.replica_id
+        )
         ctx.routed_replica_id = target_replica.replica_id
+        ctx.routed_endpoint = target_replica.endpoint
         ctx.routing_policy = decision.policy.value
         ctx.estimated_prefix_affinity = decision.estimated_prefix_affinity
 
         routing_headers = {
             "X-Request-ID": request_id,
+            "X-Gateway-Request-ID": request_id,
+            "traceparent": traceparent,
             "X-Queue-Wait-Ms": f"{ctx.queue_wait_ms:.2f}",
             "X-Routed-Replica": target_replica.replica_id,
             "X-Routing-Policy": decision.policy.value,
@@ -502,43 +647,67 @@ def create_gateway_app(
         # =====================================================================
         if not is_stream:
             failed = False
+            resp_status = 500
             try:
                 upstream_resp = await asyncio.wait_for(
                     client.post(target_url, json=body, headers=headers),
                     timeout=effective_timeout,
                 )
+                resp_status = upstream_resp.status_code
+                ctx.backend_request_id = (
+                    _extract_backend_request_id_from_bytes(
+                        upstream_resp.content, is_sse=False
+                    )
+                    or upstream_resp.headers.get("X-Request-ID")
+                )
                 ctx.mark_finished(upstream_closed=True)
+                resp_headers = dict(routing_headers)
+                if ctx.backend_request_id:
+                    resp_headers["X-Backend-Request-ID"] = ctx.backend_request_id
+                ttft_ms = (
+                    (ctx.finished_at - ctx.created_at) * 1000.0
+                    if ctx.finished_at is not None and resp_status == 200
+                    else None
+                )
+                _record_observability(
+                    metrics, ctx, status_code=resp_status, ttft_ms=ttft_ms
+                )
                 return Response(
                     content=upstream_resp.content,
                     status_code=upstream_resp.status_code,
                     media_type=upstream_resp.headers.get(
                         "content-type", "application/json"
                     ),
-                    headers=routing_headers,
+                    headers=resp_headers,
                 )
             except (httpx.TimeoutException, asyncio.TimeoutError) as exc:
                 failed = True
                 ctx.mark_finished(upstream_closed=True, error=f"timeout: {exc}")
+                _record_observability(metrics, ctx, status_code=504)
                 return _error_json_response(
                     504,
                     f"Upstream vLLM timed out: {exc}",
                     "gateway_timeout",
                     request_id,
+                    traceparent=traceparent,
                 )
             except httpx.HTTPError as exc:
                 failed = True
                 ctx.mark_finished(upstream_closed=True, error=f"http_error: {exc}")
+                _record_observability(metrics, ctx, status_code=502)
                 return _error_json_response(
                     502,
                     f"Upstream vLLM error: {exc}",
                     "bad_gateway",
                     request_id,
+                    traceparent=traceparent,
                 )
             except asyncio.CancelledError:
                 admission.record_inflight_cancel()
                 ctx.mark_finished(
                     upstream_closed=True, client_disconnected=True, error="cancelled"
                 )
+                _record_observability(metrics, ctx, status_code=499)
                 raise
             finally:
                 _release_replica_once(registry, ctx, failed=failed)
@@ -561,8 +730,6 @@ def create_gateway_app(
                 timeout=effective_timeout,
             )
 
-            # If backend rejected request with non-200 status before streaming,
-            # read error body, close upstream stream, release replica & slot, and return.
             if upstream_resp.status_code != 200:
                 error_bytes = await upstream_resp.aread()
                 await upstream_resp.aclose()
@@ -575,6 +742,9 @@ def create_gateway_app(
                     error=f"upstream_status_{upstream_resp.status_code}",
                 )
                 request.app.state.active_requests.pop(request_id, None)
+                _record_observability(
+                    metrics, ctx, status_code=upstream_resp.status_code
+                )
                 return Response(
                     content=error_bytes,
                     status_code=upstream_resp.status_code,
@@ -604,8 +774,13 @@ def create_gateway_app(
             admission.release_slot(ctx)
             ctx.mark_finished(upstream_closed=True, error="empty_stream")
             request.app.state.active_requests.pop(request_id, None)
+            _record_observability(metrics, ctx, status_code=502)
             return _error_json_response(
-                502, "Upstream closed stream before first token", "bad_gateway", request_id
+                502,
+                "Upstream closed stream before first token",
+                "bad_gateway",
+                request_id,
+                traceparent=traceparent,
             )
         except (httpx.TimeoutException, asyncio.TimeoutError) as exc:
             if upstream_resp is not None:
@@ -614,11 +789,13 @@ def create_gateway_app(
             admission.release_slot(ctx)
             ctx.mark_finished(upstream_closed=True, error=f"pre_stream_timeout: {exc}")
             request.app.state.active_requests.pop(request_id, None)
+            _record_observability(metrics, ctx, status_code=504)
             return _error_json_response(
                 504,
                 f"Upstream timed out before first token (TTFT/deadline timeout): {exc}",
                 "gateway_timeout",
                 request_id,
+                traceparent=traceparent,
             )
         except httpx.HTTPError as exc:
             if upstream_resp is not None:
@@ -627,11 +804,13 @@ def create_gateway_app(
             admission.release_slot(ctx)
             ctx.mark_finished(upstream_closed=True, error=f"pre_stream_error: {exc}")
             request.app.state.active_requests.pop(request_id, None)
+            _record_observability(metrics, ctx, status_code=502)
             return _error_json_response(
                 502,
                 f"Upstream failed before first token: {exc}",
                 "bad_gateway",
                 request_id,
+                traceparent=traceparent,
             )
         except asyncio.CancelledError:
             if upstream_resp is not None:
@@ -645,14 +824,36 @@ def create_gateway_app(
                 error="cancelled_before_first_token",
             )
             request.app.state.active_requests.pop(request_id, None)
+            _record_observability(metrics, ctx, status_code=499)
             raise
 
         # Phase 2 (STREAMING): First chunk arrived! Commit HTTP 200 OK headers.
         ctx.mark_streaming()
+        first_chunk_ttft_ms = (
+            (ctx.first_byte_at - ctx.created_at) * 1000.0
+            if ctx.first_byte_at is not None
+            else 0.0
+        )
+        ctx.backend_request_id = (
+            _extract_backend_request_id_from_bytes(first_chunk, is_sse=True)
+            or upstream_resp.headers.get("X-Request-ID")
+        )
+
+        stream_headers = {
+            **routing_headers,
+            "X-Gateway-TTFT-Ms": f"{first_chunk_ttft_ms:.2f}",
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        }
+        if ctx.backend_request_id:
+            stream_headers["X-Backend-Request-ID"] = ctx.backend_request_id
 
         async def sse_passthrough_generator() -> AsyncIterator[bytes]:
             client_left = False
             stream_err: Optional[str] = None
+            itl_samples_ms: List[float] = []
+            last_chunk_ts = ctx.first_byte_at or time.monotonic()
             try:
                 if first_chunk:
                     if await request.is_disconnected():
@@ -693,6 +894,16 @@ def create_gateway_app(
                         client_left = True
                         break
                     if chunk:
+                        now_ts = time.monotonic()
+                        if b"[DONE]" not in chunk:
+                            itl_samples_ms.append((now_ts - last_chunk_ts) * 1000.0)
+                            last_chunk_ts = now_ts
+                            if ctx.backend_request_id is None:
+                                ctx.backend_request_id = (
+                                    _extract_backend_request_id_from_bytes(
+                                        chunk, is_sse=True
+                                    )
+                                )
                         ctx.chunks_forwarded += 1
                         yield chunk
 
@@ -720,7 +931,7 @@ def create_gateway_app(
                 yield f"data: {err_payload}\n\ndata: [DONE]\n\n".encode("utf-8")
             finally:
                 # Phase 3 (FINISHED): Always close upstream stream, release replica
-                # in-flight count, AND release the admission slot!
+                # in-flight count, release admission slot, and record final metrics/trace!
                 await upstream_resp.aclose()
                 if client_left:
                     admission.record_inflight_cancel()
@@ -732,17 +943,19 @@ def create_gateway_app(
                     error=stream_err,
                 )
                 request.app.state.active_requests.pop(request_id, None)
+                _record_observability(
+                    metrics,
+                    ctx,
+                    status_code=499 if client_left else 200,
+                    ttft_ms=first_chunk_ttft_ms,
+                    itl_samples_ms=itl_samples_ms,
+                )
 
         return StreamingResponse(
             sse_passthrough_generator(),
             status_code=200,
             media_type="text/event-stream",
-            headers={
-                **routing_headers,
-                "Cache-Control": "no-cache",
-                "Connection": "keep-alive",
-                "X-Accel-Buffering": "no",
-            },
+            headers=stream_headers,
         )
 
     return app

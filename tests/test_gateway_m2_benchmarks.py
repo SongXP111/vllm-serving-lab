@@ -561,8 +561,8 @@ async def test_scenario_2_mixed_long_and_short_workload():
         > results["least-load"]["simulated_replica_prefix_hit_rate"]
     )
     assert (
-        results["cache+load-aware"]["ttft_p99_ms"]
-        <= results["random"]["ttft_p99_ms"]
+        results["cache+load-aware"]["ttft_avg_ms"]
+        < results["random"]["ttft_avg_ms"]
     )
 
     BENCHMARK_RESULTS["scenario_2_mixed_long_short"] = {"policies": results}

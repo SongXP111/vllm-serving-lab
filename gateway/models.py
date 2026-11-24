@@ -48,9 +48,14 @@ class RequestContext:
 
     # M2 routing metadata (explicitly separating estimated affinity from real cache hits)
     routed_replica_id: Optional[str] = None
+    routed_endpoint: Optional[str] = None
     routing_policy: Optional[str] = None
     estimated_prefix_affinity: float = 0.0
     replica_released: bool = False
+
+    # Step 4 end-to-end trace correlation (gateway_request_id <-> backend_request_id)
+    traceparent: str = ""
+    backend_request_id: Optional[str] = None
 
     chunks_forwarded: int = 0
     client_disconnected: bool = False
