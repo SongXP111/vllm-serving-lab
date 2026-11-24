@@ -1,0 +1,120 @@
+{
+  "drill": "drill_1_kill_backend_pod",
+  "timestamp": "2026-11-24T04:22:55.263515+00:00",
+  "killed_pod": "mock-vllm-849c779987-5dll2",
+  "killed_ip": "10.244.0.10",
+  "endpoints_before": [
+    "10.244.0.10",
+    "10.244.0.11",
+    "10.244.0.12"
+  ],
+  "endpoints_after": [
+    "10.244.0.11",
+    "10.244.0.12",
+    "10.244.0.13"
+  ],
+  "endpoint_removal_sec": 0.67,
+  "full_recovery_to_3_ready_sec": 6.56,
+  "endpoint_timeline": [
+    {
+      "phase": "before_kill",
+      "t_sec": 0.0,
+      "endpoints": [
+        "10.244.0.10",
+        "10.244.0.11",
+        "10.244.0.12"
+      ]
+    },
+    {
+      "phase": "transition",
+      "t_sec": 0.67,
+      "endpoints": [
+        "10.244.0.11",
+        "10.244.0.12"
+      ]
+    },
+    {
+      "phase": "transition",
+      "t_sec": 6.56,
+      "endpoints": [
+        "10.244.0.11",
+        "10.244.0.12",
+        "10.244.0.13"
+      ]
+    }
+  ],
+  "traffic_summary": {
+    "total_requests": 41,
+    "succeeded": 41,
+    "failed": 0,
+    "success_rate_pct": 100.0,
+    "failure_rate_pct": 0.0,
+    "post_recovery_total": 13,
+    "post_recovery_success_rate_pct": 100.0,
+    "failed_samples": []
+  },
+  "gateway_discovery_events": [
+    {
+      "timestamp": 1795494114.305,
+      "service_host": "mock-vllm-headless.llm-serving.svc.cluster.local",
+      "ready_ips": [
+        "10.244.0.10",
+        "10.244.0.11",
+        "10.244.0.12"
+      ],
+      "added": [
+        "pod-10-244-0-10",
+        "pod-10-244-0-11",
+        "pod-10-244-0-12"
+      ],
+      "marked_unready": [],
+      "unregistered": []
+    },
+    {
+      "timestamp": 1795494166.475,
+      "service_host": "mock-vllm-headless.llm-serving.svc.cluster.local",
+      "ready_ips": [
+        "10.244.0.11",
+        "10.244.0.12"
+      ],
+      "added": [],
+      "marked_unready": [
+        "pod-10-244-0-10"
+      ],
+      "unregistered": [
+        "pod-10-244-0-10"
+      ]
+    },
+    {
+      "timestamp": 1795494172.493,
+      "service_host": "mock-vllm-headless.llm-serving.svc.cluster.local",
+      "ready_ips": [
+        "10.244.0.11",
+        "10.244.0.12",
+        "10.244.0.13"
+      ],
+      "added": [
+        "pod-10-244-0-13"
+      ],
+      "marked_unready": [],
+      "unregistered": []
+    }
+  ],
+  "gateway_logs_tail": [
+    "2026-11-24 04:22:54,186 [INFO] httpx: HTTP Request: POST http://10.244.0.12:8000/v1/chat/completions \"HTTP/1.1 200 OK\"",
+    "INFO:     10.244.0.1:10419 - \"POST /v1/chat/completions HTTP/1.1\" 200 OK",
+    "2026-11-24 04:22:54,256 [INFO] gateway: request_trace {\"gateway_request_id\": \"drill1-037\", \"traceparent\": \"00-ebe2ebbd2e5843c9b2181a937f4e4fb0-7ab7cd11de984cc8-01\", \"tenant_id\": \"default\", \"priority\": \"normal\", \"is_stream\": true, \"status_code\": 200, \"routing_policy\": \"cache+load-aware\", \"backend_replica_id\": \"pod-10-244-0-12\", \"backend_endpoint\": \"http://10.244.0.12:8000\", \"backend_request_id\": \"chatcmpl-mock-vllm-849c779987-x7mhs-v1-3f902c56\", \"estimated_prefix_affinity\": 1.0, \"queue_wait_ms\": 0.0, \"ttft_ms\": 12.56, \"itl_avg_ms\": 35.92, \"itl_p99_ms\": 36.38, \"e2e_ms\": 337.29, \"output_chunks\": 11, \"error\": null}",
+    "2026-11-24 04:22:54,426 [INFO] httpx: HTTP Request: POST http://10.244.0.12:8000/v1/chat/completions \"HTTP/1.1 200 OK\"",
+    "INFO:     10.244.0.1:38591 - \"POST /v1/chat/completions HTTP/1.1\" 200 OK",
+    "2026-11-24 04:22:54,524 [INFO] gateway: request_trace {\"gateway_request_id\": \"drill1-038\", \"traceparent\": \"00-7dca1534a0fb4584bacb63448859e7a4-2f4c34da8fc44736-01\", \"tenant_id\": \"default\", \"priority\": \"normal\", \"is_stream\": true, \"status_code\": 200, \"routing_policy\": \"cache+load-aware\", \"backend_replica_id\": \"pod-10-244-0-12\", \"backend_endpoint\": \"http://10.244.0.12:8000\", \"backend_request_id\": \"chatcmpl-mock-vllm-849c779987-x7mhs-v1-e714c200\", \"estimated_prefix_affinity\": 1.0, \"queue_wait_ms\": 0.0, \"ttft_ms\": 12.61, \"itl_avg_ms\": 36.27, \"itl_p99_ms\": 37.58, \"e2e_ms\": 340.74, \"output_chunks\": 11, \"error\": null}",
+    "2026-11-24 04:22:54,666 [INFO] httpx: HTTP Request: POST http://10.244.0.12:8000/v1/chat/completions \"HTTP/1.1 200 OK\"",
+    "INFO:     10.244.0.1:10419 - \"POST /v1/chat/completions HTTP/1.1\" 200 OK",
+    "2026-11-24 04:22:54,761 [INFO] gateway: request_trace {\"gateway_request_id\": \"drill1-039\", \"traceparent\": \"00-41a6a9c33ce74abcb2d3144e57ab390d-3e7aaec97ef84811-01\", \"tenant_id\": \"default\", \"priority\": \"normal\", \"is_stream\": true, \"status_code\": 200, \"routing_policy\": \"cache+load-aware\", \"backend_replica_id\": \"pod-10-244-0-12\", \"backend_endpoint\": \"http://10.244.0.12:8000\", \"backend_request_id\": \"chatcmpl-mock-vllm-849c779987-x7mhs-v1-9d5caf08\", \"estimated_prefix_affinity\": 1.0, \"queue_wait_ms\": 0.0, \"ttft_ms\": 11.4, \"itl_avg_ms\": 36.17, \"itl_p99_ms\": 36.61, \"e2e_ms\": 337.99, \"output_chunks\": 11, \"error\": null}",
+    "2026-11-24 04:22:54,926 [INFO] httpx: HTTP Request: POST http://10.244.0.12:8000/v1/chat/completions \"HTTP/1.1 200 OK\"",
+    "INFO:     10.244.0.1:38591 - \"POST /v1/chat/completions HTTP/1.1\" 200 OK",
+    "2026-11-24 04:22:55,004 [INFO] gateway: request_trace {\"gateway_request_id\": \"drill1-040\", \"traceparent\": \"00-431f38b7c9c4465181cdcb50493ba371-ae75fe40b39649c5-01\", \"tenant_id\": \"default\", \"priority\": \"normal\", \"is_stream\": true, \"status_code\": 200, \"routing_policy\": \"cache+load-aware\", \"backend_replica_id\": \"pod-10-244-0-12\", \"backend_endpoint\": \"http://10.244.0.12:8000\", \"backend_request_id\": \"chatcmpl-mock-vllm-849c779987-x7mhs-v1-06c019e0\", \"estimated_prefix_affinity\": 1.0, \"queue_wait_ms\": 0.0, \"ttft_ms\": 12.01, \"itl_avg_ms\": 36.46, \"itl_p99_ms\": 37.62, \"e2e_ms\": 341.25, \"output_chunks\": 11, \"error\": null}",
+    "2026-11-24 04:22:55,259 [INFO] gateway: request_trace {\"gateway_request_id\": \"drill1-041\", \"traceparent\": \"00-cfbc1f23e50a4a0f999b7c5f537dcf12-38cd907c56c94e0d-01\", \"tenant_id\": \"default\", \"priority\": \"normal\", \"is_stream\": true, \"status_code\": 200, \"routing_policy\": \"cache+load-aware\", \"backend_replica_id\": \"pod-10-244-0-12\", \"backend_endpoint\": \"http://10.244.0.12:8000\", \"backend_request_id\": \"chatcmpl-mock-vllm-849c779987-x7mhs-v1-905d0117\", \"estimated_prefix_affinity\": 1.0, \"queue_wait_ms\": 0.0, \"ttft_ms\": 12.35, \"itl_avg_ms\": 35.81, \"itl_p99_ms\": 36.19, \"e2e_ms\": 335.81, \"output_chunks\": 11, \"error\": null}",
+    "INFO:     10.244.0.1:10419 - \"GET /admin/discovery HTTP/1.1\" 200 OK",
+    "INFO:     10.244.0.1:39374 - \"GET /readyz HTTP/1.1\" 200 OK"
+  ]
+}

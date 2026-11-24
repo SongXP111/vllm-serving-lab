@@ -117,7 +117,8 @@ bash scripts/run_all_benchmarks.sh --all
 > 6. 深入理解优化底层物理机制与吞吐量-尾延迟博弈：👉 **[《大模型推理优化底层原理与吞吐量-尾延迟权衡指南》](docs/optimization_principles_and_tradeoffs.md)** 👈  
 > 7. 异步流式网关、准入控制与 Prefix-Aware 路由实测（M1 & M2）：👉 **[《大模型服务网关与路由设计与实测报告 (M1 & M2)》](docs/gateway.md)** 👈  
 > 8. 全链路证据链（Metrics → SLO → Benchmark → Regression，Step 4）：👉 **[《Step 4 证据链报告：RTX 5080 单变量对照实验与自动回归门禁》](docs/slo_benchmark_regression_report.md)** 👈  
-> 9. 高频思考与工业级深度问答：👉 **[《大模型推理与 AI Infra 核心问题与深度问答集》](QA.md)** 👈
+> 9. Kubernetes 部署、Headless DNS 发现与三大故障演练（Step 5 / M3）：👉 **[《Step 5 报告：Kubernetes 部署、三探针与 Replica 生命周期实战》](docs/k8s_lifecycle_report.md)** 👈  
+> 10. 高频思考与工业级深度问答：👉 **[《大模型推理与 AI Infra 核心问题与深度问答集》](QA.md)** 👈
 
 ### 🧪 实验矩阵明细
 

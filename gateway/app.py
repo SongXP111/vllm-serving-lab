@@ -42,6 +42,7 @@ import httpx
 
 from gateway.admission import AdmissionController, AdmissionRejectedError
 from gateway.config import GatewayConfig
+from gateway.discovery import DNSResolverFn, HeadlessDNSReplicaDiscoverer
 from gateway.metrics import GatewayMetricsCollector, RequestTraceRecord
 from gateway.models import RequestContext
 from gateway.registry import ReplicaRegistry
@@ -93,6 +94,7 @@ def _extract_backend_request_id_from_bytes(
 def create_gateway_app(
     config: Optional[GatewayConfig] = None,
     transport: Optional[httpx.AsyncBaseTransport] = None,
+    dns_resolver: Optional[DNSResolverFn] = None,
 ) -> FastAPI:
     """Create the FastAPI Gateway application."""
     cfg = config or GatewayConfig()
@@ -132,6 +134,22 @@ def create_gateway_app(
         app.state.registry = registry
         app.state.router = router
         app.state.metrics = GatewayMetricsCollector()
+        app.state.draining = False
+        app.state.discoverer: Optional[HeadlessDNSReplicaDiscoverer] = None
+        if cfg.k8s_headless_service:
+            discoverer = HeadlessDNSReplicaDiscoverer(
+                registry=registry,
+                router=router,
+                service_host=cfg.k8s_headless_service,
+                backend_port=cfg.k8s_backend_port,
+                per_replica_max_inflight=cfg.per_replica_max_inflight,
+                poll_interval_seconds=cfg.k8s_discovery_interval_seconds,
+                resolver=dns_resolver,
+            )
+            await discoverer.sync_once()
+            discoverer.start()
+            app.state.discoverer = discoverer
+
         app.state.http_client = httpx.AsyncClient(
             timeout=timeout,
             limits=limits,
@@ -140,15 +158,19 @@ def create_gateway_app(
         app.state.active_requests: Dict[str, RequestContext] = {}
         app.state.recent_requests: Dict[str, RequestContext] = {}
         logger.info(
-            "Gateway started (replicas=%d, policy=%s, max_inflight=%d, queue_capacity=%d)",
-            len(resolved_replicas),
+            "Gateway started (replicas=%d, policy=%s, max_inflight=%d, queue_capacity=%d, k8s_dns=%s)",
+            len(registry.all_replicas()),
             router.policy.value,
             cfg.max_inflight,
             cfg.queue_capacity,
+            cfg.k8s_headless_service or "disabled",
         )
         try:
             yield
         finally:
+            app.state.draining = True
+            if app.state.discoverer is not None:
+                await app.state.discoverer.stop()
             await app.state.http_client.aclose()
             logger.info("Gateway HTTP connection pool closed.")
 
@@ -273,8 +295,49 @@ def create_gateway_app(
         logger.info("request_trace %s", json.dumps(trace.to_dict(), ensure_ascii=False))
 
     @app.get("/health")
+    @app.get("/healthz")
     async def health() -> Dict[str, str]:
+        """Lightweight liveness probe (NEVER coupled to queue/load latency)."""
         return {"status": "ok"}
+
+    @app.get("/readyz")
+    async def readyz(request: Request) -> Response:
+        """Readiness probe: 200 when not draining and >=1 healthy backend replica exists."""
+        if getattr(request.app.state, "draining", False):
+            return JSONResponse(
+                status_code=503,
+                content={"status": "not_ready", "reason": "gateway_draining"},
+            )
+        registry: ReplicaRegistry = request.app.state.registry
+        avail = registry.available_replicas()
+        if not avail:
+            return JSONResponse(
+                status_code=503,
+                content={
+                    "status": "not_ready",
+                    "reason": "no_available_backend_replicas",
+                    "available_replicas": 0,
+                },
+            )
+        return JSONResponse(
+            status_code=200,
+            content={"status": "ready", "available_replicas": len(avail)},
+        )
+
+    @app.post("/admin/drain")
+    async def gateway_drain(request: Request) -> Dict[str, Any]:
+        request.app.state.draining = True
+        return {
+            "status": "draining",
+            "in_flight": request.app.state.admission.in_flight,
+        }
+
+    @app.get("/admin/discovery")
+    async def discovery_status(request: Request) -> Dict[str, Any]:
+        discoverer = getattr(request.app.state, "discoverer", None)
+        if discoverer is None:
+            return {"enabled": False}
+        return discoverer.snapshot()
 
     @app.get("/admin/admission")
     async def admission_status(request: Request) -> Dict[str, Any]:

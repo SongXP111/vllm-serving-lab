@@ -1,0 +1,194 @@
+{
+  "drill": "drill_2_rolling_update_zero_drop_drain",
+  "timestamp": "2026-11-24T04:23:19.128009+00:00",
+  "rollout_status_output": "Waiting for deployment \"mock-vllm\" rollout to finish: 1 out of 3 new replicas have been updated...\nWaiting for deployment \"mock-vllm\" rollout to finish: 1 out of 3 new replicas have been updated...\nWaiting for deployment \"mock-vllm\" rollout to finish: 1 out of 3 new replicas have been updated...\nWaiting for deployment \"mock-vllm\" rollout to finish: 2 out of 3 new replicas have been updated...\nWaiting for deployment \"mock-vllm\" rollout to finish: 2 out of 3 new replicas have been updated...\nWaiting for deployment \"mock-vllm\" rollout to finish: 2 out of 3 new replicas have been updated...\nWaiting for deployment \"mock-vllm\" rollout to finish: 1 old replicas are pending termination...\nWaiting for deployment \"mock-vllm\" rollout to finish: 1 old replicas are pending termination...\ndeployment \"mock-vllm\" successfully rolled out",
+  "rollout_duration_sec": 19.62,
+  "endpoints_before": [
+    "10.244.0.11",
+    "10.244.0.12",
+    "10.244.0.13"
+  ],
+  "endpoints_after": [
+    "10.244.0.14",
+    "10.244.0.15",
+    "10.244.0.16"
+  ],
+  "endpoint_timeline": [
+    {
+      "phase": "before_rollout",
+      "t_sec": 0.0,
+      "endpoints": [
+        "10.244.0.11",
+        "10.244.0.12",
+        "10.244.0.13"
+      ]
+    },
+    {
+      "phase": "rolling",
+      "t_sec": 7.36,
+      "endpoints": [
+        "10.244.0.11",
+        "10.244.0.12",
+        "10.244.0.14"
+      ]
+    },
+    {
+      "phase": "rolling",
+      "t_sec": 13.5,
+      "endpoints": [
+        "10.244.0.12",
+        "10.244.0.14",
+        "10.244.0.15"
+      ]
+    },
+    {
+      "phase": "rolling",
+      "t_sec": 19.62,
+      "endpoints": [
+        "10.244.0.14",
+        "10.244.0.15",
+        "10.244.0.16"
+      ]
+    }
+  ],
+  "traffic_summary": {
+    "total_requests": 88,
+    "succeeded": 88,
+    "failed": 0,
+    "success_rate_pct": 100.0,
+    "failure_rate_pct": 0.0,
+    "served_by_v1_count": 79,
+    "served_by_v2_count": 9,
+    "failed_samples": []
+  },
+  "gateway_discovery_events": [
+    {
+      "timestamp": 1795494114.305,
+      "service_host": "mock-vllm-headless.llm-serving.svc.cluster.local",
+      "ready_ips": [
+        "10.244.0.10",
+        "10.244.0.11",
+        "10.244.0.12"
+      ],
+      "added": [
+        "pod-10-244-0-10",
+        "pod-10-244-0-11",
+        "pod-10-244-0-12"
+      ],
+      "marked_unready": [],
+      "unregistered": []
+    },
+    {
+      "timestamp": 1795494166.475,
+      "service_host": "mock-vllm-headless.llm-serving.svc.cluster.local",
+      "ready_ips": [
+        "10.244.0.11",
+        "10.244.0.12"
+      ],
+      "added": [],
+      "marked_unready": [
+        "pod-10-244-0-10"
+      ],
+      "unregistered": [
+        "pod-10-244-0-10"
+      ]
+    },
+    {
+      "timestamp": 1795494172.493,
+      "service_host": "mock-vllm-headless.llm-serving.svc.cluster.local",
+      "ready_ips": [
+        "10.244.0.11",
+        "10.244.0.12",
+        "10.244.0.13"
+      ],
+      "added": [
+        "pod-10-244-0-13"
+      ],
+      "marked_unready": [],
+      "unregistered": []
+    },
+    {
+      "timestamp": 1795494184.53,
+      "service_host": "mock-vllm-headless.llm-serving.svc.cluster.local",
+      "ready_ips": [
+        "10.244.0.11",
+        "10.244.0.12",
+        "10.244.0.14"
+      ],
+      "added": [
+        "pod-10-244-0-14"
+      ],
+      "marked_unready": [
+        "pod-10-244-0-13"
+      ],
+      "unregistered": [
+        "pod-10-244-0-13"
+      ]
+    },
+    {
+      "timestamp": 1795494190.55,
+      "service_host": "mock-vllm-headless.llm-serving.svc.cluster.local",
+      "ready_ips": [
+        "10.244.0.12",
+        "10.244.0.14",
+        "10.244.0.15"
+      ],
+      "added": [
+        "pod-10-244-0-15"
+      ],
+      "marked_unready": [
+        "pod-10-244-0-11"
+      ],
+      "unregistered": [
+        "pod-10-244-0-11"
+      ]
+    },
+    {
+      "timestamp": 1795494196.57,
+      "service_host": "mock-vllm-headless.llm-serving.svc.cluster.local",
+      "ready_ips": [
+        "10.244.0.14",
+        "10.244.0.15",
+        "10.244.0.16"
+      ],
+      "added": [
+        "pod-10-244-0-16"
+      ],
+      "marked_unready": [
+        "pod-10-244-0-12"
+      ],
+      "unregistered": []
+    },
+    {
+      "timestamp": 1795494197.573,
+      "service_host": "mock-vllm-headless.llm-serving.svc.cluster.local",
+      "ready_ips": [
+        "10.244.0.14",
+        "10.244.0.15",
+        "10.244.0.16"
+      ],
+      "added": [],
+      "marked_unready": [],
+      "unregistered": [
+        "pod-10-244-0-12"
+      ]
+    }
+  ],
+  "gateway_logs_tail": [
+    "2026-11-24 04:23:17,975 [INFO] httpx: HTTP Request: POST http://10.244.0.16:8000/v1/chat/completions \"HTTP/1.1 200 OK\"",
+    "INFO:     10.244.0.1:10419 - \"POST /v1/chat/completions HTTP/1.1\" 200 OK",
+    "2026-11-24 04:23:18,118 [INFO] gateway: request_trace {\"gateway_request_id\": \"drill2-084\", \"traceparent\": \"00-5a2bb6745d4f4413b207a64ab8ea2476-a9bc717a3e724184-01\", \"tenant_id\": \"default\", \"priority\": \"normal\", \"is_stream\": true, \"status_code\": 200, \"routing_policy\": \"cache+load-aware\", \"backend_replica_id\": \"pod-10-244-0-16\", \"backend_endpoint\": \"http://10.244.0.16:8000\", \"backend_request_id\": \"chatcmpl-mock-vllm-5bd97749b-98979-v2-f2f2f188\", \"estimated_prefix_affinity\": 1.0, \"queue_wait_ms\": 0.0, \"ttft_ms\": 12.03, \"itl_avg_ms\": 36.19, \"itl_p99_ms\": 36.94, \"e2e_ms\": 411.39, \"output_chunks\": 13, \"error\": null}",
+    "2026-11-24 04:23:18,211 [INFO] httpx: HTTP Request: POST http://10.244.0.16:8000/v1/chat/completions \"HTTP/1.1 200 OK\"",
+    "INFO:     10.244.0.1:38591 - \"POST /v1/chat/completions HTTP/1.1\" 200 OK",
+    "2026-11-24 04:23:18,382 [INFO] gateway: request_trace {\"gateway_request_id\": \"drill2-085\", \"traceparent\": \"00-50f3f46be15841c7864c58a7a8c6b00a-ba35211ba50c463e-01\", \"tenant_id\": \"default\", \"priority\": \"normal\", \"is_stream\": true, \"status_code\": 200, \"routing_policy\": \"cache+load-aware\", \"backend_replica_id\": \"pod-10-244-0-16\", \"backend_endpoint\": \"http://10.244.0.16:8000\", \"backend_request_id\": \"chatcmpl-mock-vllm-5bd97749b-98979-v2-042f56cd\", \"estimated_prefix_affinity\": 1.0, \"queue_wait_ms\": 0.0, \"ttft_ms\": 11.84, \"itl_avg_ms\": 36.18, \"itl_p99_ms\": 36.97, \"e2e_ms\": 411.01, \"output_chunks\": 13, \"error\": null}",
+    "2026-11-24 04:23:18,479 [INFO] httpx: HTTP Request: POST http://10.244.0.16:8000/v1/chat/completions \"HTTP/1.1 200 OK\"",
+    "INFO:     10.244.0.1:10419 - \"POST /v1/chat/completions HTTP/1.1\" 200 OK",
+    "2026-11-24 04:23:18,621 [INFO] gateway: request_trace {\"gateway_request_id\": \"drill2-086\", \"traceparent\": \"00-18d5609778044f2f8f4e5d37c0a01559-af96904c04504650-01\", \"tenant_id\": \"default\", \"priority\": \"normal\", \"is_stream\": true, \"status_code\": 200, \"routing_policy\": \"cache+load-aware\", \"backend_replica_id\": \"pod-10-244-0-16\", \"backend_endpoint\": \"http://10.244.0.16:8000\", \"backend_request_id\": \"chatcmpl-mock-vllm-5bd97749b-98979-v2-00db1466\", \"estimated_prefix_affinity\": 1.0, \"queue_wait_ms\": 0.0, \"ttft_ms\": 12.77, \"itl_avg_ms\": 36.32, \"itl_p99_ms\": 37.5, \"e2e_ms\": 413.55, \"output_chunks\": 13, \"error\": null}",
+    "2026-11-24 04:23:18,718 [INFO] httpx: HTTP Request: POST http://10.244.0.16:8000/v1/chat/completions \"HTTP/1.1 200 OK\"",
+    "INFO:     10.244.0.1:38591 - \"POST /v1/chat/completions HTTP/1.1\" 200 OK",
+    "2026-11-24 04:23:18,887 [INFO] gateway: request_trace {\"gateway_request_id\": \"drill2-087\", \"traceparent\": \"00-b082518cf50c443b858052c330f9f7ff-2294f44d8ba249b7-01\", \"tenant_id\": \"default\", \"priority\": \"normal\", \"is_stream\": true, \"status_code\": 200, \"routing_policy\": \"cache+load-aware\", \"backend_replica_id\": \"pod-10-244-0-16\", \"backend_endpoint\": \"http://10.244.0.16:8000\", \"backend_request_id\": \"chatcmpl-mock-vllm-5bd97749b-98979-v2-dfc6b580\", \"estimated_prefix_affinity\": 1.0, \"queue_wait_ms\": 0.0, \"ttft_ms\": 12.2, \"itl_avg_ms\": 36.15, \"itl_p99_ms\": 36.8, \"e2e_ms\": 411.42, \"output_chunks\": 13, \"error\": null}",
+    "2026-11-24 04:23:19,123 [INFO] gateway: request_trace {\"gateway_request_id\": \"drill2-088\", \"traceparent\": \"00-ecaf73a920514bebbb0b021b62764468-534f3547a1374382-01\", \"tenant_id\": \"default\", \"priority\": \"normal\", \"is_stream\": true, \"status_code\": 200, \"routing_policy\": \"cache+load-aware\", \"backend_replica_id\": \"pod-10-244-0-16\", \"backend_endpoint\": \"http://10.244.0.16:8000\", \"backend_request_id\": \"chatcmpl-mock-vllm-5bd97749b-98979-v2-5a330730\", \"estimated_prefix_affinity\": 1.0, \"queue_wait_ms\": 0.0, \"ttft_ms\": 12.19, \"itl_avg_ms\": 35.9, \"itl_p99_ms\": 36.44, \"e2e_ms\": 408.28, \"output_chunks\": 13, \"error\": null}",
+    "INFO:     10.244.0.1:10419 - \"GET /admin/discovery HTTP/1.1\" 200 OK",
+    "INFO:     10.244.0.1:35758 - \"GET /readyz HTTP/1.1\" 200 OK"
+  ]
+}

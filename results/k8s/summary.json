@@ -1,0 +1,22 @@
+{
+  "cluster": "kind-llm-serving",
+  "namespace": "llm-serving",
+  "drill1_kill_backend_summary": {
+    "success_rate_pct": 100.0,
+    "post_recovery_success_rate_pct": 100.0,
+    "recovery_sec": 6.56
+  },
+  "drill2_rolling_update_summary": {
+    "success_rate_pct": 100.0,
+    "served_by_v1": 79,
+    "served_by_v2": 9,
+    "rollout_sec": 19.62
+  },
+  "drill3_cold_start_and_readiness_summary": {
+    "cold_start_restarts": 0,
+    "readiness_never_restarted_container": true,
+    "requests_routed_to_unready_pod": 0,
+    "removed_sec": 3.08,
+    "restored_sec": 1.55
+  }
+}

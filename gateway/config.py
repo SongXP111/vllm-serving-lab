@@ -95,10 +95,23 @@ class GatewayConfig:
     )
     router_rng_seed: Optional[int] = None
 
+    # Step 5: Kubernetes Headless Service Dynamic Endpoint Discovery
+    k8s_headless_service: str = os.environ.get("GATEWAY_K8S_HEADLESS_SERVICE", "")
+    k8s_backend_port: int = int(os.environ.get("GATEWAY_K8S_BACKEND_PORT", "8000"))
+    k8s_discovery_interval_seconds: float = float(
+        os.environ.get("GATEWAY_K8S_DISCOVERY_INTERVAL", "1.0")
+    )
+    per_replica_max_inflight: int = int(
+        os.environ.get("GATEWAY_PER_REPLICA_MAX_INFLIGHT", "4")
+    )
+
     def resolved_replicas(self) -> List[ReplicaConfig]:
         """Return configured replicas, or fall back to env/single `backend_url`."""
         if self.replicas:
             return list(self.replicas)
+        if self.k8s_headless_service:
+            # Managed dynamically by HeadlessDNSReplicaDiscoverer from K8s Endpoints
+            return []
         env_urls = os.environ.get("GATEWAY_BACKEND_URLS", "").strip()
         if env_urls:
             urls = [u.strip() for u in env_urls.split(",") if u.strip()]
