@@ -14,6 +14,7 @@
 - [Q6: 在流式推理（SSE）中，已经发出 HTTP Headers 后为什么不能再随意返回另一份 JSON 错误？M1 Step 1 的五大失败测试如何证明零资源泄漏？](#q6-在流式推理sse中已经发出-http-headers-后为什么不能再随意返回另一份-json-错误m1-step-1-的五大失败测试如何证明零资源泄漏)
 - [Q7: 为什么必须在 Gateway 层决定「接受、排队还是拒绝」后 Router 才有可用的负载状态？llm-d EPP 的 Flow Control 四大核心概念（Saturation / Flow / Priority / Fairness）是什么？](#q7-为什么必须在-gateway-层决定接受排队还是拒绝后-router-才有可用的负载状态llm-d-epp-的-flow-control-四大核心概念saturation--flow--priority--fairness是什么)
 - [Q8: 既然 vLLM 自己内部已经有 `waiting` 和 `running` 调度队列，为什么 Gateway 的队列必须独立于它们？](#q8-既然-vllm-自己内部已经有-waiting-和-running-调度队列为什么-gateway-的队列必须独立于它们)
+- [Q9: 为什么 Prefix-Aware Routing 能把集群有效 KV Cache 容量放大 N 倍？为什么 Cache Locality 与 Load Balance 会产生正面冲突？](#q9-为什么-prefix-aware-routing-能把集群有效-kv-cache-容量放大-n-倍为什么-cache-locality-与-load-balance-会产生正面冲突)
 
 ---
 
@@ -476,6 +477,52 @@ Gateway 队列必须独立于 vLLM `waiting` / `running` 队列的 **四大核�
 
 ##### 4. 保护 vLLM 主进程 Event Loop 与 CPU 分词线程，避免产生 GPU 调度气泡
 * vLLM API Server 与 Tokenizer 运行在 CPU 上。如果让成百上千个并发请求直接堆积在 vLLM 内部，海量挂起协程与分词任务会争抢 CPU 与 GIL，拖慢主进程向 GPU 发射下一个 Step Kernel 的速度，导致正在 `running` 的请求出现 **Step 间气泡（TPOT 劣化）**。Gateway 用 `max_inflight` 锁死进入每台 vLLM 的并发上限，让 vLLM 的 `waiting` 队列常年保持极低水位，专心满负荷驱动 GPU。
+
+---
+
+### Q9: 为什么 Prefix-Aware Routing 能把集群有效 KV Cache 容量放大 N 倍？为什么 Cache Locality 与 Load Balance 会产生正面冲突？
+
+#### ❓ 问题背景
+在多副本推理集群（M2：`ReplicaRegistry` + `Filter → Score → Pick` 路由）中，传统无状态服务的最优解是 **Least-load（最少连接/最闲优先）**；但大模型服务引入 **Prefix-aware** 后，既带来了集群缓存容量的倍增，又引发了热点场景下的剧烈冲突。其底层物理机制与工程折中是什么？
+
+---
+
+#### 💡 核心解析一：为什么 Prefix-Aware Routing 能把集群的有效 KV Cache 容量放大 $N$ 倍？
+
+设集群有 $N$ 台相同的 vLLM 副本（例如 $N = 3$），每台 GPU 的空闲 KV Cache 最多只能同时常驻 $C$ 个长上下文前缀（例如每台仅能存 $C = 2$ 个长 System Prompt）。此时业务线上同时活跃着 $M = 6$ 个不同的多轮 Agent 会话（每个都有很长的公共 System Prompt）：
+
+1. **无前缀感知路由（`random` / `least-load`）—— 有效容量退化为 $1 \times C$，引发持续 LRU 抖动（Cache Thrashing）**：
+   * `least-load` 只看哪台机器当前最闲，把这 6 个 Agent 的每一轮请求随机/轮流撒向 3 台机器。
+   * 结果：**每台机器都被迫去缓存全部 6 个 Agent 的副本**（3 台机器存了大量重复拷贝），但单机容量只有 $C = 2$！
+   * 于是每台机器都在疯狂“刚算完 Agent-5，把 Agent-1 踢出 LRU → 下一秒 Agent-1 又被派到这台机器，被迫从头重算 Prefill”，**集群总物理显存虽然扩大了 $N$ 倍，但去重后的有效工作集容量依然只有单机的 $C$**！
+2. **前缀感知路由（`prefix-aware` / `cache+load-aware`）—— 有效容量线性放大至 $N \times C$**：
+   * 网关通过链式 Token-Prefix Block Hash + 冷启动最冷缓存打散（`no-hit-lru` 思想），将 6 个 Agent 自动逻辑分片（Sharding）：`Agent-0/1` 粘在 `Replica-0`、`Agent-2/3` 粘在 `Replica-1`、`Agent-4/5` 粘在 `Replica-2`。
+   * 每台机器只需稳稳保存属于自己的 2 个热前缀（$2 \le C$），**零冗余重复拷贝、零 LRU 相互驱逐**！集群的有效聚合 KV Cache 容量从 $C$ 直接放大到 $N \times C$。
+   * **M2 实测铁证**（`results/gateway/m2_mock_policy_comparison.json` 场景 1，6 Agent × 4 轮，单机容量 30 块，集群总量 90 块）：
+     * `least-load` (Before)：Prefix Hit 仅 **`16.67%`**，TTFT P50 卡死在冷启动 **`109.0 ms`**；
+     * `cache+load-aware` (After)：Prefix Hit 跃升至 **`75.00%`（+58.3 pct）**，TTFT P50 骤降至 **`16.0 ms`（6.8x 提速）**，Mock 相对吞吐提升 **+86%**。
+   * **RTX 5080 单卡真实 vLLM 物理印证**（`results/gateway/m2_real_vllm_verification.json`）：约 2,185 Token 共享长前缀在命中真实 GPU KV Cache 后，TTFT 从冷启动 **`1,682.28 ms`** 骤降至热复用 **`79.97 ms`（21.04x 提速）**。
+
+---
+
+#### 💡 核心解析二：为什么 Cache Locality（缓存局部性）与 Load Balance（负载均衡）会产生正面冲突？
+
+上述美好画面有一个致命前提：**不同前缀的访问流量相对均匀**。一旦出现 **热点倾斜（Hot Prefix Skew）**——例如某个爆款智能体/公共长文档在同一毫秒涌入 8 个并发请求——两个优化目标就会迎面相撞：
+
+| 冲突极端 | 典型策略 | 发生了什么？ | M2 场景 3 实测数据（8 并发同热门前缀，单机 GPU 槽=2） |
+| :--- | :--- | :--- | :--- |
+| **极端 A：死守 Cache Locality** | 纯 `prefix-aware` | 看到 `Replica-1` 已经缓存了热门前缀，把 8 个并发请求**100% 全部塞进 `Replica-1`**！结果 `Replica-1` 本地队列排起长龙，而 `Replica-0` 与 `Replica-2` 在旁边 100% 闲置空转。 | • Prefix Hit = **`100%`**（最高）<br>• 单机最高堆积 = **`8/8`**<br>• Queue P99 = **`109.0 ms`**、TTFT P99 = **`109.0 ms`**（最差！）<br>• Mock 相对吞吐 = **`57.14 rps`**（最差！） |
+| **极端 B：死守 Load Balance** | 纯 `least-load` | 机械按 `3/3/2` 均匀分给 3 台机器，彻底无视谁有热缓存，导致空闲的 2 台机器反复做昂贵的冷 Prefill 重算。 | • Prefix Hit = **`50.0%`**（最低）<br>• Queue P99 = `62.0 ms`、TTFT P99 = `62.0 ms`<br>• Mock 相对吞吐 = `86.02 rps` |
+| **工业破局：联立打分 + 热点衰减溢出** | **`cache+load-aware`** | 平时按 $w_{\text{prefix}} \cdot S_{\text{prefix}} + w_{\text{load}} \cdot S_{\text{load}}$ 走热机吃缓存；一旦热机负载达到 **`hotspot_load_threshold`** 或 KV 显存逼近 **`kv_hotspot_threshold (85%)`**，对前缀亲和度施加热点衰减（Hotspot Damping），**主动将超额请求溢出分流至空闲机**（不仅止损排队，顺带把热前缀复制到第二台机器实现水平扩容！）。 | • Prefix Hit = **`75.0%`**（比 `least-load` 高 +25 pct）<br>• Queue P99 = **`47.0 ms`**、TTFT P99 = **`47.0 ms`**（比 `prefix-aware` 降 **56.9%**！）<br>• Mock 相对吞吐 = **`170.21 rps`**（最优！） |
+
+---
+
+#### 💡 核心解析三：一条不可逾越的工程红线 —— 绝不把“网关估计命中”当成“真实 Cache Hit”
+* 网关侧的 `EstimatedPrefixCacheIndex` 只是根据“以前把哪些前缀发给过哪台机器 + 有界 LRU”算出来的**路由估计亲和度（`estimated_prefix_affinity`）**；真实后端 GPU 可能因为突发超长输出抢占、其他直连流量或内存碎片提前淘汰了 KV 块。
+* 因此工程设计上必须将两者严格隔离：
+  1. 网关响应头与自身指标明确命名为 `X-Estimated-Prefix-Affinity` 与 `gateway_router_estimated_prefix_affinity_avg`；
+  2. 真实缓存命中率必须通过抓取后端 vLLM `/metrics`（`vllm:prefix_cache_hits_total` / `vllm:prefix_cache_queries_total`）独立观测并交叉校验（在 RTX 5080 真机校验中，真实观测命中率 `74.14%` 与网关估计均值 `74.78%` 高度吻合，误差仅 `0.64%`）。
+
 
 
 
