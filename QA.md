@@ -15,6 +15,8 @@
 - [Q7: 为什么必须在 Gateway 层决定「接受、排队还是拒绝」后 Router 才有可用的负载状态？llm-d EPP 的 Flow Control 四大核心概念（Saturation / Flow / Priority / Fairness）是什么？](#q7-为什么必须在-gateway-层决定接受排队还是拒绝后-router-才有可用的负载状态llm-d-epp-的-flow-control-四大核心概念saturation--flow--priority--fairness是什么)
 - [Q8: 既然 vLLM 自己内部已经有 `waiting` 和 `running` 调度队列，为什么 Gateway 的队列必须独立于它们？](#q8-既然-vllm-自己内部已经有-waiting-和-running-调度队列为什么-gateway-的队列必须独立于它们)
 - [Q9: 为什么 Prefix-Aware Routing 能把集群有效 KV Cache 容量放大 N 倍？为什么 Cache Locality 与 Load Balance 会产生正面冲突？](#q9-为什么-prefix-aware-routing-能把集群有效-kv-cache-容量放大-n-倍为什么-cache-locality-与-load-balance-会产生正面冲突)
+- [Q10: 为什么 Prometheus 延迟指标不能用 Gauge 平均值而必须用 Histogram（秒）？为什么提升吞吐（Tokens/s）反而可能恶化尾延迟甚至让 Goodput 归零？](#q10-为什么-prometheus-延迟指标不能用-gauge-平均值而必须用-histogram秒为什么提升吞吐tokenss反而可能恶化尾延迟甚至让-goodput-归零)
+- [Q11: 在 Kubernetes 上部署大模型服务时，Startup / Readiness / Liveness 三大探针有什么本质区别？为什么绝不能把“满载高延迟”当成死锁触发 Liveness 重启？](#q11-在-kubernetes-上部署大模型服务时startup--readiness--liveness-三大探针有什么本质区别为什么绝不能把满载高延迟当成死锁触发-liveness-重启)
 
 ---
 
@@ -522,6 +524,83 @@ Gateway 队列必须独立于 vLLM `waiting` / `running` 队列的 **四大核�
 * 因此工程设计上必须将两者严格隔离：
   1. 网关响应头与自身指标明确命名为 `X-Estimated-Prefix-Affinity` 与 `gateway_router_estimated_prefix_affinity_avg`；
   2. 真实缓存命中率必须通过抓取后端 vLLM `/metrics`（`vllm:prefix_cache_hits_total` / `vllm:prefix_cache_queries_total`）独立观测并交叉校验（在 RTX 5080 真机校验中，真实观测命中率 `74.14%` 与网关估计均值 `74.78%` 高度吻合，误差仅 `0.64%`）。
+
+---
+
+### Q10: 为什么 Prometheus 延迟指标不能用 Gauge 平均值而必须用 Histogram（秒）？为什么提升吞吐（Tokens/s）反而可能恶化尾延迟甚至让 Goodput 归零？
+
+#### ❓ 问题背景
+在 **Step 4（建立证据链：Metrics → SLO → Benchmark → Regression）** 中，要求对接 [vLLM Production Metrics](https://docs.vllm.ai/en/stable/usage/metrics/)，把网关指标标准化为 `Counter` / `Gauge` / `Histogram`，串联 `gateway_request_id` ↔ 后端请求，并用固定控制变量压测回答：**“为什么提升吞吐可能恶化尾延迟？”**
+
+---
+
+#### 💡 核心解析一：Prometheus 三大指标类型的工程铁律（为什么延迟必须用 `Histogram` `_seconds`？）
+
+| 指标类型 | 行为特征 | 典型用途 | Gateway & vLLM 对应标准指标 |
+| :--- | :--- | :--- | :--- |
+| **`Counter`** | 单调递增，只增不减 | `rate(...[1m])` 算 QPS、拒绝率、各策略占比 | `gateway_requests_total`、`gateway_rejections_total{reason}`、`gateway_router_policy_selections_total{policy}` |
+| **`Gauge`** | 可升可降的瞬时水位 | 盯实时积压、触发扩缩容 | `gateway_queue_depth`、`gateway_inflight_requests`、`vllm:num_requests_running` |
+| **`Histogram`** | 拆分为 `_bucket{le=...}`、`_sum`、`_count`，统一使用 SI 秒制（`_seconds`） | `histogram_quantile(0.99, sum(rate(..._bucket[1m])) by (le))` | `gateway_queue_wait_seconds`、`gateway_ttft_seconds`、`gateway_itl_seconds`、`vllm:time_to_first_token_seconds` |
+
+* **为什么绝不能用 `Gauge` 暴露“平均延迟 (`avg_ms`)”或单机算好的 P99？**
+  1. **平均值会彻底掩盖长尾灾难**：99% 的请求 15ms、1% 的请求卡死 3000ms，平均值只有 45ms，看不出任何异常；
+  2. **数学上不可跨实例聚合**：3 台网关各自算出来的 `avg_ms` 或 `p99_ms` 无法在 PromQL 中合并成整个集群的真实 P99；而 `Histogram` 的分桶计数（`_bucket`）具备可加性，可以在多副本间直接 `sum()` 后还原全集群精准分位数。
+* **端到端耗时解剖（`gateway_request_id` ↔ `backend_request_id`）**：
+  $$\text{Client E2E} = \underbrace{\text{gateway\_queue\_wait}}_{\text{网关准入排队}} + \underbrace{\text{vllm:request\_queue\_time}}_{\text{vLLM 内部等待}} + \underbrace{\text{Prefill 计算}}_{\text{首字算力}} + \underbrace{\sum \text{ITL / TPOT}}_{\text{Decode 逐字生成}}$$
+  将 `X-Gateway-Request-ID` 与 W3C `traceparent` 透传到下游并关联回填 vLLM 的 `chatcmpl-...` ID，就能把每一条 P99 慢请求精准归因到网关排队、路由选错还是 GPU 计算阶段。
+
+---
+
+#### 💡 核心解析二：为什么提升原始吞吐（Tokens/s）反而可能恶化尾延迟甚至让 Goodput 归零？
+
+1. **Batch 变大与 Prefill/Decode 混合干扰**：拉高并发（增大 `max_inflight`）能把权重访存开销分摊给更多请求，显著抬高总 `output_tps`；但在单卡算力与带宽有限的情况下，Chunked Prefill 不断把长 Prompt 的计算块穿插进正在运行的 Decode Step 中，且每步要扫描的 KV Cache 总量扩大，导致单步耗时上升 → **TPOT / ITL 尾延迟显著恶化**。
+2. **排队论非线性爆炸与 KV 抢占**：当到达率逼近或超过硬件饱和拐点时，排队延迟呈指数级飙升；一旦显存触顶触发 KV Cache Preemption（抢占重算），被驱逐的请求会出现秒级 ITL 卡顿。
+3. **单卡 RTX 5080 真实实测铁证**（`docs/slo_benchmark_regression_report.md`、`results/step4/`，固定 `seed=42`，`10 req/s`，1.3K 冷输入 / 96 输出，SLO: `TTFT <= 1800ms, TPOT <= 20ms, E2E <= 4000ms`）：
+   * **`max_inflight = 2`**：原始吞吐 `108.1 tok/s`，`TPOT P99 = 17.03 ms`（达标），但网关排队积压 `14.4s`；
+   * **`max_inflight = 6`**：原始吞吐飙升 **`+72%`** 至 `186.1 tok/s`，但 `TPOT P99` 恶化 **`+71.9%`** 至 **`29.27 ms`**（`ITL P99 = 284 ms`）—— 自动回归门禁 `scripts/check_regression.py` 立刻红灯拦截（**`REGRESS`，exit code `1`**）！
+   * **`max_inflight = 20`（无界追吞吐）**：原始吞吐冲到最高 **`225.3 tok/s`（+109%）**，假设成本最低，但 `TPOT P50 = 24.47 ms`、`ITL P95 = 94 ms`、`TTFT P99 = 5.26 s`，**SLO 有效吞吐 Goodput 归零（`0 / 20` = `0.0%`）**！
+   * **破局方式**：① 超载洪峰靠有界反压（`max_inflight=3, queue_capacity=3`）快速 `503` 保护在途用户，把 Goodput 从 `0.00` 救回 **`1.13 rps`**（TTFT P99 骤降 `-88.8%` 至 `588.6 ms`）；② 正常流量靠 Prefix Cache 亲和复用消除长 Prefill 干扰（真实命中 `81.64%`），让吞吐 `+49%`、Goodput 暴涨 **`18.2x`**、TTFT P99 `-34%`、TPOT P99 `-18%`，零误差通过 `check_regression.py`（**`PASS`，exit code `0`**）！
+
+---
+
+### Q11: 在 Kubernetes 上部署大模型服务时，Startup / Readiness / Liveness 三大探针有什么本质区别？为什么绝不能把“满载高延迟”当成死锁触发 Liveness 重启？
+
+#### ❓ 问题背景
+在 **Step 5（将 Gateway + 多 Replica 部署到 Kubernetes，验证 Deployment / Service / Probes / Pod Lifecycle 与故障恢复）** 中，需要解决大模型服务的三大特殊生命周期问题：**慢冷启动（加载权重数分钟）、有状态前缀路由服务发现、以及长流式 SSE 优雅下线**。
+
+---
+
+#### 💡 核心解析一：三大探针的本质区别
+
+| 探针类型 | 核心判定问题 | 探测失败时 K8s 的动作 | 大模型推理容器的正确配置原则 |
+| :--- | :--- | :--- | :--- |
+| **`startupProbe`** | **“模型权重和 CUDA Graph 加载完了吗？”** | 通过前**屏蔽** Readiness 和 Liveness；超过总启动上限才重启 | 给足冷启动时间窗口（如 `failureThreshold * periodSeconds >= 180s`），防止权重加载到一半被误杀进 `CrashLoopBackOff` |
+| **`readinessProbe`** | **“现在能接新流量吗？”** | **绝不重启容器！** 仅把该 Pod IP 从 Service `Endpoints` 列表移除（摘流）；恢复后自动放回 | 检测 `/readyz`：冷启动未完成、收到 `SIGTERM` 正在 Drain 排空、或需要临时摘流避峰时返回 `503` |
+| **`livenessProbe`** | **“进程是不是彻底死锁不可自愈了？”** | **直接杀掉容器并重启（Restart）！** | 只做极轻量 `/healthz` 存活检查，不查推理队列、不跑模型前向，且适当放宽超时与失败次数 |
+
+---
+
+#### 💡 核心解析二：为什么绝不能把“满载造成的高延迟”直接当成 `livenessProbe` 失败触发重启？（级联重启雪崩）
+
+假设 3 个 vLLM Pod 正在承受流量高峰，若把 `livenessProbe` 设得过于敏感（如 `timeoutSeconds: 1` 或把推理排队接口当成 liveness 探测目标），一旦满载变慢就会触发 **级联重启死亡螺旋（Cascading Restart Death Spiral）**：
+
+1. **误杀热节点**：`Pod-A` 只是高并发满载响应慢（进程完全健康、正在吐字），却因探针超时被 K8s 强杀重启；
+2. **雪上加霜的代价**：`Pod-A` 上所有在途的长流式 SSE 请求全部报错中断，显存里热乎乎的 **Prefix KV Cache 瞬间清零**，且重启重新加载模型权重需要 1~3 分钟，短期彻底退出服务；
+3. **多米诺骨牌雪崩**：原本由 `Pod-A` 承接的 1/3 流量瞬间砸到剩下的 `Pod-B` 和 `Pod-C` 上 → `Pod-B/C` 立刻超载变慢 → 它们的 `livenessProbe` 也超时被 K8s 强杀 → **整个集群进入无限重启死循环，彻底宕机！**
+
+* **工程铁律**：满载过载只能通过 **Gateway 有界队列 / `503` 反压** 与 **`readinessProbe` 临时摘流** 缓解，**绝对不能用 `livenessProbe` 重启进程去“治”高负载！**
+
+---
+
+#### 💡 核心解析三：大模型 K8s 部署的另外两个关键设计（Headless Service 与 Graceful Drain）
+
+1. **为什么推理网关要配 Headless Service（`clusterIP: None`）而不是只连普通 `ClusterIP`？**
+   * 普通 `ClusterIP` 由 `kube-proxy` 随机负载均衡，会绕过 Gateway 的 `ReplicaRegistry`，导致 **Prefix-Aware Routing 彻底失效**。
+   * **Headless Service (`clusterIP: None`)** 的 DNS 解析直接返回所有 Ready Pod 的真实 IP 列表，Gateway 定期同步进 `ReplicaRegistry`，既享受 K8s 的自动摘流与扩缩容发现，又完整保留节点级 Prefix 亲和路由。
+2. **长流式 SSE 的零中断滚动发布（`preStop` + `SIGTERM` Drain + `terminationGracePeriodSeconds`）**：
+   * Pod 进入 `Terminating` 时，K8s **异步并发**执行“从 `Endpoints` 摘除 IP”与“停止容器”。
+   * 因此必须配置 **`lifecycle.preStop`（如 `sleep 5`）** 等待 DNS/Gateway 完成摘流；随后容器收到 **`SIGTERM`** 时，立即把 `/readyz` 置为 `503` 拒接新请求，但**继续把在途的 Streaming SSE 全部吐完 `[DONE]`**，并在 `terminationGracePeriodSeconds`（如 `45s`）内优雅退出，避免滚动发布把正在看打字的用户直接掐断！
+
 
 
 
