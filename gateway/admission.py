@@ -125,6 +125,7 @@ class AdmissionController:
 
     def __init__(self, config: GatewayConfig) -> None:
         self.cfg = config
+        self.effective_max_inflight: int = max(1, config.max_inflight)
         self.in_flight: int = 0
         self.queued_count: int = 0
         self.tenant_active: Dict[str, int] = defaultdict(int)
@@ -151,6 +152,37 @@ class AdmissionController:
     def record_inflight_cancel(self) -> None:
         """Record a request cancelled while executing in-flight."""
         self.stats.cancelled_in_flight += 1
+
+    def _dispatch_waiting_while_capacity(self) -> int:
+        """Wake queued requests up to `effective_max_inflight` capacity."""
+        dispatched = 0
+        while self.in_flight < self.effective_max_inflight:
+            next_entry = self._pop_next_entry()
+            if next_entry is None:
+                break
+            if not next_entry.cancelled:
+                self.in_flight += 1
+                self.stats.max_observed_inflight = max(
+                    self.stats.max_observed_inflight, self.in_flight
+                )
+                next_entry.granted = True
+                next_entry.ctx.mark_admitted(was_queued=True)
+                self._record_dispatch(next_entry.ctx)
+                next_entry.event.set()
+                dispatched += 1
+        return dispatched
+
+    def set_effective_max_inflight(self, new_limit: int) -> int:
+        """Dynamically adjust effective concurrency ceiling (e.g. as K8s replicas scale).
+
+        When capacity grows, waiting requests in the Gateway bounded queue are woken up
+        immediately so newly Ready backend Pods relieve queueing right away.
+        When capacity shrinks, in-flight requests drain naturally without abrupt drops.
+        """
+        clamped = max(1, min(self.cfg.max_inflight, int(new_limit)))
+        self.effective_max_inflight = clamped
+        self._dispatch_waiting_while_capacity()
+        return self.effective_max_inflight
 
     def _get_token_bucket(self, tenant_id: str) -> TokenBucket:
         bucket = self.tenant_buckets.get(tenant_id)
@@ -353,7 +385,7 @@ class AdmissionController:
             )
 
         # 3. Work-conserving Fast Path: Backend is NOT saturated and queue is empty
-        if self.in_flight < self.cfg.max_inflight and self.queued_count == 0:
+        if self.in_flight < self.effective_max_inflight and self.queued_count == 0:
             self.in_flight += 1
             self.tenant_active[tenant_id] += 1
             self.stats.total_admitted_immediately += 1
@@ -373,7 +405,7 @@ class AdmissionController:
                 (
                     f"System overloaded: bounded queue is full "
                     f"(queued={self.queued_count}/{self.cfg.queue_capacity}, "
-                    f"in_flight={self.in_flight}/{self.cfg.max_inflight})"
+                    f"in_flight={self.in_flight}/{self.effective_max_inflight})"
                 ),
                 retry_after=1.0,
             )
@@ -474,19 +506,10 @@ class AdmissionController:
             0, self.tenant_active[ctx.tenant_id] - 1
         )
 
-        # Direct handoff: if another request is waiting in the bounded queue,
-        # transfer this in-flight slot directly to it (prevents barging).
-        while True:
-            next_entry = self._pop_next_entry()
-            if next_entry is None:
-                self.in_flight = max(0, self.in_flight - 1)
-                return
-            if not next_entry.cancelled:
-                next_entry.granted = True
-                next_entry.ctx.mark_admitted(was_queued=True)
-                self._record_dispatch(next_entry.ctx)
-                next_entry.event.set()
-                return
+        # Release current slot and wake up queued waiters while below effective_max_inflight
+        # (handles both normal 1-for-1 handoff and graceful scale-down contraction).
+        self.in_flight = max(0, self.in_flight - 1)
+        self._dispatch_waiting_while_capacity()
 
     def snapshot(self) -> Dict[str, Any]:
         """Return live state + first-class queue_depth/queue_wait/reject/cancel metrics."""
@@ -512,6 +535,7 @@ class AdmissionController:
         return {
             "in_flight": self.in_flight,
             "max_inflight": self.cfg.max_inflight,
+            "effective_max_inflight": self.effective_max_inflight,
             "queued_count": self.queued_count,
             "queue_depth": self.queued_count,
             "queue_capacity": self.cfg.queue_capacity,

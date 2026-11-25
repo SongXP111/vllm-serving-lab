@@ -1,0 +1,55 @@
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: mock-vllm-queue-scaler
+  namespace: llm-serving
+  labels:
+    app: mock-vllm
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: mock-vllm
+  # KEDA polls Prometheus every 5s; HPA reconciles 1 <-> 4 replicas using external metrics.
+  pollingInterval: 5
+  # Note: cooldownPeriod only governs scaling to 0 (when minReplicaCount == 0).
+  # For 1 <-> N scale-down anti-flapping, configure HPA behavior.scaleDown.stabilizationWindowSeconds below!
+  cooldownPeriod: 30
+  minReplicaCount: 1
+  maxReplicaCount: 4
+  # Fail-Safe fallback: if Prometheus is temporarily unreachable or returns missing metric
+  # for 2 consecutive polls, KEDA holds/scales to 2 safe replicas instead of scaling down to 1 or 0.
+  fallback:
+    failureThreshold: 2
+    replicas: 2
+  advanced:
+    restoreToOriginalReplicaCount: false
+    horizontalPodAutoscalerConfig:
+      name: keda-hpa-mock-vllm-queue-scaler
+      behavior:
+        # Fast but bounded scale-up (max +2 Pods per 15s) to mitigate cold-start overshoot.
+        scaleUp:
+          stabilizationWindowSeconds: 0
+          policies:
+            - type: Pods
+              value: 2
+              periodSeconds: 15
+        # Slow, stabilized scale-down: wait 45s after queue drains before stepping down
+        # 1 Pod every 15s to avoid flapping and protect warm prefix KV cache / in-flight SSE streams.
+        scaleDown:
+          stabilizationWindowSeconds: 45
+          policies:
+            - type: Pods
+              value: 1
+              periodSeconds: 15
+  triggers:
+    - type: prometheus
+      # AverageValue: HPA desiredReplicas = ceil(metricValue / threshold)
+      metricType: AverageValue
+      metadata:
+        serverAddress: http://prometheus.llm-serving.svc.cluster.local:9090
+        # Explicitly scales on Gateway admission queue depth (NOT vLLM engine scheduler queue),
+        # smoothed over a 30s peak window to prevent single-scrape jitter.
+        query: max_over_time(gateway_queue_depth[30s])
+        threshold: "2"
+        ignoreNullValues: "false"

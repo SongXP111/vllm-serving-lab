@@ -104,6 +104,10 @@ class GatewayConfig:
     per_replica_max_inflight: int = int(
         os.environ.get("GATEWAY_PER_REPLICA_MAX_INFLIGHT", "4")
     )
+    dynamic_max_inflight: bool = (
+        os.environ.get("GATEWAY_DYNAMIC_MAX_INFLIGHT", "false").strip().lower()
+        in ("1", "true", "yes")
+    )
 
     def resolved_replicas(self) -> List[ReplicaConfig]:
         """Return configured replicas, or fall back to env/single `backend_url`."""

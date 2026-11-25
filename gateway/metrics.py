@@ -285,8 +285,11 @@ class GatewayMetricsCollector:
                 f'gateway_requests_total{{status_code="{status_code}",stream="{stream_lbl}",policy="{pol_lbl}"}} {count}'
             )
 
-        # 2. `gateway_inflight_requests` & backward-compatible `gateway_in_flight` (Gauge)
+        # 2. `gateway_inflight_requests` & `gateway_effective_max_inflight` (Gauge)
         in_flight = admission_snapshot["in_flight"]
+        eff_max_inflight = admission_snapshot.get(
+            "effective_max_inflight", admission_snapshot["max_inflight"]
+        )
         lines.extend(
             [
                 "# HELP gateway_inflight_requests Current number of in-flight requests executing on backends.",
@@ -295,6 +298,9 @@ class GatewayMetricsCollector:
                 "# HELP gateway_in_flight Alias for gateway_inflight_requests.",
                 "# TYPE gateway_in_flight gauge",
                 f"gateway_in_flight {in_flight}",
+                "# HELP gateway_effective_max_inflight Effective dynamic concurrency admission ceiling across ready replicas.",
+                "# TYPE gateway_effective_max_inflight gauge",
+                f"gateway_effective_max_inflight {eff_max_inflight}",
             ]
         )
 

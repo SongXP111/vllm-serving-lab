@@ -1,0 +1,284 @@
+{
+  "experiment": "exp1_fixed_1_replica_baseline",
+  "timestamp": "2026-11-25T04:07:51.815614+00:00",
+  "workload": {
+    "duration_sec": 55.0,
+    "interval_sec": 0.3,
+    "target_rps": 3.33,
+    "max_tokens": 24,
+    "token_delay_ms": 55.0
+  },
+  "queue_depth_peak": 16,
+  "queue_depth_avg": 12.87,
+  "max_spec_replicas": 1,
+  "max_ready_replicas": 1,
+  "summary_overall": {
+    "window": "all_0_55s",
+    "total_requests": 182,
+    "succeeded_200": 98,
+    "rejected_503": 84,
+    "other_errors": 0,
+    "success_rate_pct": 53.85,
+    "rejection_rate_503_pct": 46.15,
+    "queue_wait_avg_ms": 0.0,
+    "queue_wait_p50_ms": 0.0,
+    "queue_wait_p99_ms": 0.0,
+    "ttft_p50_ms": 9064.92,
+    "ttft_p99_ms": 10096.92,
+    "e2e_p50_ms": 10358.74,
+    "e2e_p99_ms": 11388.16
+  },
+  "summary_early_0_20s": {
+    "window": "early_0_20s",
+    "total_requests": 66,
+    "succeeded_200": 46,
+    "rejected_503": 20,
+    "other_errors": 0,
+    "success_rate_pct": 69.7,
+    "rejection_rate_503_pct": 30.3,
+    "queue_wait_avg_ms": 0.0,
+    "queue_wait_p50_ms": 0.0,
+    "queue_wait_p99_ms": 0.0,
+    "ttft_p50_ms": 7869.23,
+    "ttft_p99_ms": 10096.92,
+    "e2e_p50_ms": 9164.91,
+    "e2e_p99_ms": 11388.16
+  },
+  "summary_late_20_55s": {
+    "window": "late_20_55s",
+    "total_requests": 116,
+    "succeeded_200": 52,
+    "rejected_503": 64,
+    "other_errors": 0,
+    "success_rate_pct": 44.83,
+    "rejection_rate_503_pct": 55.17,
+    "queue_wait_avg_ms": 0.0,
+    "queue_wait_p50_ms": 0.0,
+    "queue_wait_p99_ms": 0.0,
+    "ttft_p50_ms": 9139.44,
+    "ttft_p99_ms": 10046.01,
+    "e2e_p50_ms": 10436.99,
+    "e2e_p99_ms": 11349.78
+  },
+  "timeline": [
+    {
+      "t_sec": 0.0,
+      "gateway_queue_depth": 0,
+      "gateway_in_flight": 1,
+      "gateway_effective_max_inflight": 2,
+      "prom_max_queue_30s": 0.0,
+      "spec_replicas": 1,
+      "ready_replicas": 1
+    },
+    {
+      "t_sec": 3.05,
+      "gateway_queue_depth": 6,
+      "gateway_in_flight": 2,
+      "gateway_effective_max_inflight": 2,
+      "prom_max_queue_30s": 3.0,
+      "spec_replicas": 1,
+      "ready_replicas": 1
+    },
+    {
+      "t_sec": 6.17,
+      "gateway_queue_depth": 11,
+      "gateway_in_flight": 2,
+      "gateway_effective_max_inflight": 2,
+      "prom_max_queue_30s": 9.0,
+      "spec_replicas": 1,
+      "ready_replicas": 1
+    },
+    {
+      "t_sec": 9.3,
+      "gateway_queue_depth": 16,
+      "gateway_in_flight": 2,
+      "gateway_effective_max_inflight": 2,
+      "prom_max_queue_30s": 14.0,
+      "spec_replicas": 1,
+      "ready_replicas": 1
+    },
+    {
+      "t_sec": 12.06,
+      "gateway_queue_depth": 15,
+      "gateway_in_flight": 2,
+      "gateway_effective_max_inflight": 2,
+      "prom_max_queue_30s": 16.0,
+      "spec_replicas": 1,
+      "ready_replicas": 1
+    },
+    {
+      "t_sec": 14.84,
+      "gateway_queue_depth": 15,
+      "gateway_in_flight": 2,
+      "gateway_effective_max_inflight": 2,
+      "prom_max_queue_30s": 16.0,
+      "spec_replicas": 1,
+      "ready_replicas": 1
+    },
+    {
+      "t_sec": 17.64,
+      "gateway_queue_depth": 16,
+      "gateway_in_flight": 2,
+      "gateway_effective_max_inflight": 2,
+      "prom_max_queue_30s": 16.0,
+      "spec_replicas": 1,
+      "ready_replicas": 1
+    },
+    {
+      "t_sec": 20.42,
+      "gateway_queue_depth": 16,
+      "gateway_in_flight": 2,
+      "gateway_effective_max_inflight": 2,
+      "prom_max_queue_30s": 16.0,
+      "spec_replicas": 1,
+      "ready_replicas": 1
+    },
+    {
+      "t_sec": 23.22,
+      "gateway_queue_depth": 16,
+      "gateway_in_flight": 2,
+      "gateway_effective_max_inflight": 2,
+      "prom_max_queue_30s": 16.0,
+      "spec_replicas": 1,
+      "ready_replicas": 1
+    },
+    {
+      "t_sec": 26.02,
+      "gateway_queue_depth": 16,
+      "gateway_in_flight": 2,
+      "gateway_effective_max_inflight": 2,
+      "prom_max_queue_30s": 16.0,
+      "spec_replicas": 1,
+      "ready_replicas": 1
+    },
+    {
+      "t_sec": 28.92,
+      "gateway_queue_depth": 16,
+      "gateway_in_flight": 2,
+      "gateway_effective_max_inflight": 2,
+      "prom_max_queue_30s": 16.0,
+      "spec_replicas": 1,
+      "ready_replicas": 1
+    },
+    {
+      "t_sec": 31.77,
+      "gateway_queue_depth": 16,
+      "gateway_in_flight": 2,
+      "gateway_effective_max_inflight": 2,
+      "prom_max_queue_30s": 16.0,
+      "spec_replicas": 1,
+      "ready_replicas": 1
+    },
+    {
+      "t_sec": 34.66,
+      "gateway_queue_depth": 16,
+      "gateway_in_flight": 2,
+      "gateway_effective_max_inflight": 2,
+      "prom_max_queue_30s": 16.0,
+      "spec_replicas": 1,
+      "ready_replicas": 1
+    },
+    {
+      "t_sec": 37.5,
+      "gateway_queue_depth": 16,
+      "gateway_in_flight": 2,
+      "gateway_effective_max_inflight": 2,
+      "prom_max_queue_30s": 16.0,
+      "spec_replicas": 1,
+      "ready_replicas": 1
+    },
+    {
+      "t_sec": 40.3,
+      "gateway_queue_depth": 16,
+      "gateway_in_flight": 2,
+      "gateway_effective_max_inflight": 2,
+      "prom_max_queue_30s": 16.0,
+      "spec_replicas": 1,
+      "ready_replicas": 1
+    },
+    {
+      "t_sec": 43.36,
+      "gateway_queue_depth": 15,
+      "gateway_in_flight": 2,
+      "gateway_effective_max_inflight": 2,
+      "prom_max_queue_30s": 16.0,
+      "spec_replicas": 1,
+      "ready_replicas": 1
+    },
+    {
+      "t_sec": 46.19,
+      "gateway_queue_depth": 16,
+      "gateway_in_flight": 2,
+      "gateway_effective_max_inflight": 2,
+      "prom_max_queue_30s": 16.0,
+      "spec_replicas": 1,
+      "ready_replicas": 1
+    },
+    {
+      "t_sec": 49.27,
+      "gateway_queue_depth": 16,
+      "gateway_in_flight": 2,
+      "gateway_effective_max_inflight": 2,
+      "prom_max_queue_30s": 16.0,
+      "spec_replicas": 1,
+      "ready_replicas": 1
+    },
+    {
+      "t_sec": 52.11,
+      "gateway_queue_depth": 15,
+      "gateway_in_flight": 2,
+      "gateway_effective_max_inflight": 2,
+      "prom_max_queue_30s": 16.0,
+      "spec_replicas": 1,
+      "ready_replicas": 1
+    },
+    {
+      "t_sec": 54.99,
+      "gateway_queue_depth": 15,
+      "gateway_in_flight": 2,
+      "gateway_effective_max_inflight": 2,
+      "prom_max_queue_30s": 16.0,
+      "spec_replicas": 1,
+      "ready_replicas": 1
+    },
+    {
+      "t_sec": 57.81,
+      "gateway_queue_depth": 8,
+      "gateway_in_flight": 2,
+      "gateway_effective_max_inflight": 2,
+      "prom_max_queue_30s": 16.0,
+      "spec_replicas": 1,
+      "ready_replicas": 1
+    },
+    {
+      "t_sec": 60.64,
+      "gateway_queue_depth": 4,
+      "gateway_in_flight": 2,
+      "gateway_effective_max_inflight": 2,
+      "prom_max_queue_30s": 16.0,
+      "spec_replicas": 1,
+      "ready_replicas": 1
+    },
+    {
+      "t_sec": 63.49,
+      "gateway_queue_depth": 0,
+      "gateway_in_flight": 2,
+      "gateway_effective_max_inflight": 2,
+      "prom_max_queue_30s": 16.0,
+      "spec_replicas": 1,
+      "ready_replicas": 1
+    }
+  ],
+  "kubectl_snapshots": {
+    "before": {
+      "hpa": "No resources found in llm-serving namespace.",
+      "scaledobject": "No resources found in llm-serving namespace.",
+      "deployment": "NAME         READY   UP-TO-DATE   AVAILABLE   AGE\nmock-vllm    1/1     1            1           23h\nprometheus   1/1     1            1           27s"
+    },
+    "after": {
+      "hpa": "No resources found in llm-serving namespace.",
+      "scaledobject": "No resources found in llm-serving namespace.",
+      "deployment": "NAME         READY   UP-TO-DATE   AVAILABLE   AGE\nmock-vllm    1/1     1            1           23h\nprometheus   1/1     1            1           93s"
+    }
+  }
+}

@@ -137,6 +137,23 @@ def create_gateway_app(
         app.state.draining = False
         app.state.discoverer: Optional[HeadlessDNSReplicaDiscoverer] = None
         if cfg.k8s_headless_service:
+            def _sync_dynamic_capacity(ready_count: int) -> None:
+                if not cfg.dynamic_max_inflight:
+                    return
+                target_cap = max(
+                    cfg.per_replica_max_inflight,
+                    ready_count * cfg.per_replica_max_inflight,
+                )
+                prev = app.state.admission.effective_max_inflight
+                updated = app.state.admission.set_effective_max_inflight(target_cap)
+                if updated != prev:
+                    logger.info(
+                        "Dynamic admission capacity updated: effective_max_inflight %d -> %d (ready_replicas=%d)",
+                        prev,
+                        updated,
+                        ready_count,
+                    )
+
             discoverer = HeadlessDNSReplicaDiscoverer(
                 registry=registry,
                 router=router,
@@ -145,6 +162,7 @@ def create_gateway_app(
                 per_replica_max_inflight=cfg.per_replica_max_inflight,
                 poll_interval_seconds=cfg.k8s_discovery_interval_seconds,
                 resolver=dns_resolver,
+                on_ready_replicas_change=_sync_dynamic_capacity,
             )
             await discoverer.sync_once()
             discoverer.start()
@@ -321,7 +339,11 @@ def create_gateway_app(
             )
         return JSONResponse(
             status_code=200,
-            content={"status": "ready", "available_replicas": len(avail)},
+            content={
+                "status": "ready",
+                "available_replicas": len(avail),
+                "effective_max_inflight": request.app.state.admission.effective_max_inflight,
+            },
         )
 
     @app.post("/admin/drain")

@@ -1,0 +1,242 @@
+{
+  "experiment": "exp4_prometheus_outage_keda_fallback",
+  "timestamp": "2026-11-25T04:13:41.290220+00:00",
+  "configured_fallback": {
+    "failureThreshold": 2,
+    "replicas": 2
+  },
+  "t_fallback_activated_sec": 23.14,
+  "t_scaled_to_fallback_replicas_sec": 36.55,
+  "t_recovered_after_prometheus_restore_sec": 24.75,
+  "conditions": {
+    "before_outage": {
+      "exists": true,
+      "hpa_name": "keda-hpa-mock-vllm-queue-scaler",
+      "conditions": {
+        "Ready": {
+          "status": "True",
+          "reason": "ScaledObjectReady"
+        },
+        "Active": {
+          "status": "True",
+          "reason": "ScalerActive"
+        },
+        "Fallback": {
+          "status": "Unknown",
+          "reason": null
+        },
+        "Paused": {
+          "status": "False",
+          "reason": null
+        }
+      }
+    },
+    "during_outage": {
+      "exists": true,
+      "hpa_name": "keda-hpa-mock-vllm-queue-scaler",
+      "conditions": {
+        "Ready": {
+          "status": "True",
+          "reason": "ScaledObjectReady"
+        },
+        "Active": {
+          "status": "True",
+          "reason": "ScalerActive"
+        },
+        "Fallback": {
+          "status": "True",
+          "reason": "FallbackExists"
+        },
+        "Paused": {
+          "status": "False",
+          "reason": null
+        },
+        "HPAActive": {
+          "status": "True",
+          "reason": "HPAActive"
+        }
+      }
+    },
+    "after_recovery": {
+      "exists": true,
+      "hpa_name": "keda-hpa-mock-vllm-queue-scaler",
+      "conditions": {
+        "Ready": {
+          "status": "True",
+          "reason": "ScaledObjectReady"
+        },
+        "Active": {
+          "status": "False",
+          "reason": "ScalerNotActive"
+        },
+        "Fallback": {
+          "status": "False",
+          "reason": "NoFallbackFound"
+        },
+        "Paused": {
+          "status": "False",
+          "reason": null
+        },
+        "HPAActive": {
+          "status": "True",
+          "reason": "HPAActive"
+        }
+      }
+    }
+  },
+  "kubectl_snapshots": {
+    "before_outage": {
+      "hpa": "NAME                              REFERENCE              TARGETS             MINPODS   MAXPODS   REPLICAS   AGE\nkeda-hpa-mock-vllm-queue-scaler   Deployment/mock-vllm   <unknown>/2 (avg)   1         4         0          3s",
+      "scaledobject": "NAME                     SCALETARGETKIND      SCALETARGETNAME   MIN   MAX   READY   ACTIVE   FALLBACK   PAUSED   TRIGGERS     AUTHENTICATIONS   AGE\nmock-vllm-queue-scaler   apps/v1.Deployment   mock-vllm         1     4     True    True     Unknown    False    prometheus                     4s",
+      "deployment": "NAME         READY   UP-TO-DATE   AVAILABLE   AGE\nmock-vllm    1/1     1            1           23h\nprometheus   1/1     1            1           6m19s"
+    },
+    "during_outage": {
+      "hpa": "NAME                              REFERENCE              TARGETS     MINPODS   MAXPODS   REPLICAS   AGE\nkeda-hpa-mock-vllm-queue-scaler   Deployment/mock-vllm   4/2 (avg)   1         4         1          40s",
+      "scaledobject": "NAME                     SCALETARGETKIND      SCALETARGETNAME   MIN   MAX   READY   ACTIVE   FALLBACK   PAUSED   TRIGGERS     AUTHENTICATIONS   AGE\nmock-vllm-queue-scaler   apps/v1.Deployment   mock-vllm         1     4     True    True     True       False    prometheus                     42s",
+      "deployment": "NAME         READY   UP-TO-DATE   AVAILABLE   AGE\nmock-vllm    2/2     2            2           23h\nprometheus   0/0     0            0           6m57s"
+    },
+    "after_recovery": {
+      "hpa": "NAME                              REFERENCE              TARGETS     MINPODS   MAXPODS   REPLICAS   AGE\nkeda-hpa-mock-vllm-queue-scaler   Deployment/mock-vllm   0/2 (avg)   1         4         2          66s",
+      "scaledobject": "NAME                     SCALETARGETKIND      SCALETARGETNAME   MIN   MAX   READY   ACTIVE   FALLBACK   PAUSED   TRIGGERS     AUTHENTICATIONS   AGE\nmock-vllm-queue-scaler   apps/v1.Deployment   mock-vllm         1     4     True    False    False      False    prometheus                     67s",
+      "deployment": "NAME         READY   UP-TO-DATE   AVAILABLE   AGE\nmock-vllm    2/2     2            2           23h\nprometheus   1/1     1            1           7m23s"
+    }
+  },
+  "timeline": [
+    {
+      "t_sec": 3.19,
+      "phase": "prometheus_down",
+      "fallback_condition": "False",
+      "ready_condition": "True",
+      "spec_replicas": 1,
+      "ready_replicas": 1
+    },
+    {
+      "t_sec": 6.51,
+      "phase": "prometheus_down",
+      "fallback_condition": "False",
+      "ready_condition": "True",
+      "spec_replicas": 1,
+      "ready_replicas": 1
+    },
+    {
+      "t_sec": 9.84,
+      "phase": "prometheus_down",
+      "fallback_condition": "False",
+      "ready_condition": "True",
+      "spec_replicas": 1,
+      "ready_replicas": 1
+    },
+    {
+      "t_sec": 13.16,
+      "phase": "prometheus_down",
+      "fallback_condition": "False",
+      "ready_condition": "True",
+      "spec_replicas": 1,
+      "ready_replicas": 1
+    },
+    {
+      "t_sec": 16.5,
+      "phase": "prometheus_down",
+      "fallback_condition": "False",
+      "ready_condition": "True",
+      "spec_replicas": 1,
+      "ready_replicas": 1
+    },
+    {
+      "t_sec": 19.83,
+      "phase": "prometheus_down",
+      "fallback_condition": "False",
+      "ready_condition": "True",
+      "spec_replicas": 1,
+      "ready_replicas": 1
+    },
+    {
+      "t_sec": 23.14,
+      "phase": "prometheus_down",
+      "fallback_condition": "True",
+      "ready_condition": "True",
+      "spec_replicas": 1,
+      "ready_replicas": 1
+    },
+    {
+      "t_sec": 26.47,
+      "phase": "prometheus_down",
+      "fallback_condition": "True",
+      "ready_condition": "True",
+      "spec_replicas": 1,
+      "ready_replicas": 1
+    },
+    {
+      "t_sec": 29.8,
+      "phase": "prometheus_down",
+      "fallback_condition": "True",
+      "ready_condition": "True",
+      "spec_replicas": 1,
+      "ready_replicas": 1
+    },
+    {
+      "t_sec": 33.14,
+      "phase": "prometheus_down",
+      "fallback_condition": "True",
+      "ready_condition": "True",
+      "spec_replicas": 2,
+      "ready_replicas": 1
+    },
+    {
+      "t_sec": 36.55,
+      "phase": "prometheus_down",
+      "fallback_condition": "True",
+      "ready_condition": "True",
+      "spec_replicas": 2,
+      "ready_replicas": 2
+    },
+    {
+      "t_sec_after_restore": 7.86,
+      "phase": "prometheus_restored",
+      "fallback_condition": "True",
+      "ready_condition": "True",
+      "spec_replicas": 2,
+      "ready_replicas": 2
+    },
+    {
+      "t_sec_after_restore": 11.22,
+      "phase": "prometheus_restored",
+      "fallback_condition": "True",
+      "ready_condition": "True",
+      "spec_replicas": 2,
+      "ready_replicas": 2
+    },
+    {
+      "t_sec_after_restore": 14.55,
+      "phase": "prometheus_restored",
+      "fallback_condition": "True",
+      "ready_condition": "True",
+      "spec_replicas": 2,
+      "ready_replicas": 2
+    },
+    {
+      "t_sec_after_restore": 17.92,
+      "phase": "prometheus_restored",
+      "fallback_condition": "True",
+      "ready_condition": "True",
+      "spec_replicas": 2,
+      "ready_replicas": 2
+    },
+    {
+      "t_sec_after_restore": 21.41,
+      "phase": "prometheus_restored",
+      "fallback_condition": "True",
+      "ready_condition": "True",
+      "spec_replicas": 2,
+      "ready_replicas": 2
+    },
+    {
+      "t_sec_after_restore": 24.75,
+      "phase": "prometheus_restored",
+      "fallback_condition": "False",
+      "ready_condition": "True",
+      "spec_replicas": 2,
+      "ready_replicas": 2
+    }
+  ]
+}

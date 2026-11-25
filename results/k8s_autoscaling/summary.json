@@ -1,0 +1,45 @@
+{
+  "cluster": "kind-llm-serving",
+  "namespace": "llm-serving",
+  "disclaimer": "Measures Mock Replica control-plane autoscaling (Gateway queue -> Prometheus -> KEDA -> HPA -> Deployment -> Headless DNS), NOT multi-GPU inference TPS scaling.",
+  "fixed_vs_autoscaled_comparison": {
+    "fixed_1_replica_overall": {
+      "replicas": 1,
+      "queue_depth_peak": 16,
+      "queue_depth_avg": 12.87,
+      "rejection_rate_503_pct": 46.15,
+      "queue_wait_p99_ms": 0.0,
+      "e2e_p99_ms": 11388.16,
+      "late_window_20_55s_503_pct": 55.17,
+      "late_window_20_55s_queue_wait_p99_ms": 0.0
+    },
+    "autoscaled_1_to_4_overall": {
+      "peak_replicas": 4,
+      "queue_depth_peak": 16,
+      "queue_depth_avg": 4.95,
+      "rejection_rate_503_pct": 9.29,
+      "queue_wait_p99_ms": 0.0,
+      "e2e_p99_ms": 10909.88,
+      "early_window_0_20s_control_lag_503_pct": 25.76,
+      "late_window_20_55s_post_scale_503_pct": 0.0,
+      "late_window_20_55s_queue_wait_p99_ms": 0.0
+    }
+  },
+  "scale_down_stabilization": {
+    "configured_window_sec": 45,
+    "observed_hold_after_prom_zero_sec": 26.66,
+    "returned_to_min_1_sec": 61.06
+  },
+  "slow_cold_start_15s": {
+    "hpa_scale_at_sec": 10.09,
+    "first_new_pod_ready_at_sec": 28.7,
+    "cold_start_readiness_lag_sec": 18.61,
+    "max_spec_minus_ready_gap_pods": 3,
+    "rejection_rate_503_pct": 28.45
+  },
+  "prometheus_outage_fallback": {
+    "fallback_activated_sec": 23.14,
+    "scaled_to_fallback_2_sec": 36.55,
+    "recovered_after_restore_sec": 24.75
+  }
+}

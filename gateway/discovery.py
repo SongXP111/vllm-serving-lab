@@ -52,6 +52,7 @@ class HeadlessDNSReplicaDiscoverer:
         per_replica_max_inflight: int = 4,
         poll_interval_seconds: float = 1.0,
         resolver: Optional[DNSResolverFn] = None,
+        on_ready_replicas_change: Optional[Callable[[int], None]] = None,
         max_events: int = 100,
     ) -> None:
         self.registry = registry
@@ -61,6 +62,7 @@ class HeadlessDNSReplicaDiscoverer:
         self.per_replica_max_inflight = max(1, per_replica_max_inflight)
         self.poll_interval_seconds = max(0.2, poll_interval_seconds)
         self._resolver = resolver or default_dns_resolver
+        self._on_ready_replicas_change = on_ready_replicas_change
 
         self.managed_ids: Set[str] = set()
         self.draining_ids: Set[str] = set()
@@ -139,6 +141,9 @@ class HeadlessDNSReplicaDiscoverer:
             }
             self.events.append(event)
             logger.info("K8s endpoint sync change: %s", event)
+
+        if self._on_ready_replicas_change is not None:
+            self._on_ready_replicas_change(len(sorted_ips))
 
         return {
             "service_host": self.service_host,
