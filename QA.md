@@ -17,6 +17,7 @@
 - [Q9: 为什么 Prefix-Aware Routing 能把集群有效 KV Cache 容量放大 N 倍？为什么 Cache Locality 与 Load Balance 会产生正面冲突？](#q9-为什么-prefix-aware-routing-能把集群有效-kv-cache-容量放大-n-倍为什么-cache-locality-与-load-balance-会产生正面冲突)
 - [Q10: 为什么 Prometheus 延迟指标不能用 Gauge 平均值而必须用 Histogram（秒）？为什么提升吞吐（Tokens/s）反而可能恶化尾延迟甚至让 Goodput 归零？](#q10-为什么-prometheus-延迟指标不能用-gauge-平均值而必须用-histogram秒为什么提升吞吐tokenss反而可能恶化尾延迟甚至让-goodput-归零)
 - [Q11: 在 Kubernetes 上部署大模型服务时，Startup / Readiness / Liveness 三大探针有什么本质区别？为什么绝不能把“满载高延迟”当成死锁触发 Liveness 重启？](#q11-在-kubernetes-上部署大模型服务时startup--readiness--liveness-三大探针有什么本质区别为什么绝不能把满载高延迟当成死锁触发-liveness-重启)
+- [Q12: 为什么大模型自动扩缩容要采用 Queue-Driven Autoscaling（KEDA + Prometheus + HPA）？为什么扩容无法立刻消除排队、扩太快会抖动，且必须区分 Gateway 队列与 Engine 队列？](#q12-为什么大模型自动扩缩容要采用-queue-driven-autoscalingkeda--prometheus--hpa为什么扩容无法立刻消除排队扩太快会抖动且必须区分-gateway-队列与-engine-队列)
 
 ---
 
@@ -600,6 +601,63 @@ Gateway 队列必须独立于 vLLM `waiting` / `running` 队列的 **四大核�
 2. **长流式 SSE 的零中断滚动发布（`preStop` + `SIGTERM` Drain + `terminationGracePeriodSeconds`）**：
    * Pod 进入 `Terminating` 时，K8s **异步并发**执行“从 `Endpoints` 摘除 IP”与“停止容器”。
    * 因此必须配置 **`lifecycle.preStop`（如 `sleep 5`）** 等待 DNS/Gateway 完成摘流；随后容器收到 **`SIGTERM`** 时，立即把 `/readyz` 置为 `503` 拒接新请求，但**继续把在途的 Streaming SSE 全部吐完 `[DONE]`**，并在 `terminationGracePeriodSeconds`（如 `45s`）内优雅退出，避免滚动发布把正在看打字的用户直接掐断！
+
+---
+
+### Q12: 为什么大模型自动扩缩容要采用 Queue-Driven Autoscaling（KEDA + Prometheus + HPA）？为什么扩容无法立刻消除排队、扩太快会抖动，且必须区分 Gateway 队列与 Engine 队列？
+
+#### ❓ 问题背景
+在 **Step 6（Queue-driven Autoscaling，M3 最小闭环）** 中，我们将 Step 4 的 Prometheus 排队指标与 Step 5 的 Kubernetes Deployment 打通，构建 `Gateway (/metrics) → Prometheus → KEDA ScaledObject → HPA → Deployment → Headless DNS` 的自动控制闭环。在这一环中，最容易踩坑的是 **KEDA/HPA 职责与参数误用、队列归属边界混淆，以及忽视带滞后反馈控制系统的过冲与震荡风险**。
+
+---
+
+#### 💡 核心解析一：为什么不能只用 CPU/Memory HPA？KEDA 与 HPA 各自负责什么？
+
+1. **CPU/Memory 与 LLM 推理瓶颈错位**：
+   * 大模型推理的真实瓶颈是 **GPU 算力、KV Cache 显存占用与并发槽位**，高负载时容器 CPU 利用率可能依然很低，等 CPU/RAM 报警再扩容早已错过时机；
+   * **Queue Depth（队列积压）与 In-flight 需求量**属于直接的**前导信号（Leading Indicator）**，能在 P99 尾延迟失控或大面积 503 拒流前直接反映当前欠缺的处理容量。
+2. **KEDA 不是替代 HPA，而是把外部指标桥接给 HPA**：
+   * **`KEDA Operator`**：监听 `ScaledObject`，自动创建并托管一个标准的 Kubernetes **`HPA`**，同时仅在 `0 ↔ 1`（缩零与唤醒）区间由 KEDA 直接修改副本数；
+   * **`KEDA Metrics Server`**：充当 Kubernetes External Metrics Adapter（`external.metrics.k8s.io`），定期执行 Prometheus PromQL 查询并向 `kube-apiserver` 暴露数值；
+   * **Kubernetes `HPA`**：在 `1 ↔ maxReplicaCount` 之间，**真正计算目标副本数、执行扩缩容限速与冷却防抖（`stabilizationWindowSeconds`）的仍是原生 HPA**。
+
+---
+
+#### 💡 核心解析二：`ScaledObject` 与 Prometheus Scaler 的 5 个关键参数（及高频踩坑点）
+
+| 参数 / 配置 | 核心作用 | 工程要点与高频踩坑点 |
+| :--- | :--- | :--- |
+| **`serverAddress` / `query` / `threshold`** | 指定 Prometheus 地址、PromQL 查询语句与单副本目标阈值 | 建议对原始瞬时指标叠加滑动窗口聚合（如 `avg_over_time` / `max_over_time`），避免单次毛刺误触发扩容 |
+| **`metricType: AverageValue` vs `Value`** | 决定 HPA 如何把指标值换算为目标副本数 | Prometheus Scaler 默认 **`AverageValue`**：$\text{desiredReplicas} = \lceil \text{metricValue} / \text{threshold} \rceil$；若误配为 `Value`，HPA 会在计算中额外乘以 `currentReplicas`，极易瞬间把副本数拉满到上限 |
+| **`minReplicaCount` / `maxReplicaCount`** | 保底容量与成本/集群资源硬上限 | 推理服务通常设置 `minReplicaCount >= 1`（避免缩零后的漫长模型冷启动） |
+| **`pollingInterval` vs `cooldownPeriod` vs HPA `behavior`** | 控制采样频率与防抖冷却 | **最高频误区**：KEDA 的 **`cooldownPeriod` 只在缩容到 0（`minReplicaCount: 0`）时生效**！当 `minReplicaCount >= 1` 时，真正的缩容防抖必须配置 **`advanced.horizontalPodAutoscalerConfig.behavior.scaleDown.stabilizationWindowSeconds`**（如 `60s~300s`），配合“快扩限幅 + 慢缩限步”的非对称策略 |
+| **`fallback`（`failureThreshold` + `replicas`）** | 指标链路故障时的安全降级（Fail-Safe） | 当 Prometheus 短暂不可达、超时或返回空值连续达 `failureThreshold` 次时，强制切换至保守副本数 `fallback.replicas`，**绝不能因指标丢失误判为 0 负载而把服务缩死** |
+
+---
+
+#### 💡 核心解析三：必须分清队列归属 —— `gateway_queue_depth` vs `vllm:num_requests_waiting`
+
+| 对比维度 | Gateway 队列 (`gateway_queue_depth`) | Engine Scheduler 队列 (`vllm:num_requests_waiting`) |
+| :--- | :--- | :--- |
+| **物理归属** | 集群统一入口的准入控制与有界等待队列 | 每个后端 vLLM Pod 内部的连续批处理调度器队列 |
+| **反映的信号** | 全局视角下“被入口准入槽位挡在门外”的总超载需求 | 单卡实例内部的显存 KV Cache 与批处理饱和度 |
+| **核心工程注意点** | 1. **必须联动动态并发上限**：若 Gateway 的 `max_inflight` 写死为静态常量，即使 KEDA 把后端从 1 扩到 4 副本，请求仍会被挡在 Gateway 门外排长队；有效准入上限必须随 Ready 副本数动态缩放（如 `ready_replicas × per_replica_max_inflight`）。<br/>2. **纯看 `queue_depth` 容易“刚消峰就误缩容”**：当新副本刚把排队消化完（`queue_depth = 0`）但 3 个副本仍在满载跑 `inflight` 时，仅看 `queue_depth` 会误以为完全闲置；工程中常使用组合需求信号（如 `gateway_inflight_requests + gateway_queue_depth`）或配合长 `stabilizationWindowSeconds`。 | 分散在多台 Pod 中，需做跨副本聚合（`sum(vllm:num_requests_waiting)`）；且如果上游 Gateway 提前 `503` 拒流，后端引擎队列可能看似很低而掩盖真实丢单率。 |
+
+---
+
+#### 💡 核心解析四：自动控制论视角下的 4 大风险与实验边界
+
+1. **控制滞后（Control Lag）—— 扩容绝不能“立刻”消除当前排队**：
+   * 闭环总响应时延 = `Prometheus scrape 周期 + KEDA pollingInterval + HPA sync 周期 (15s) + Pod 调度 + 模型冷启动 (startupProbe) + Headless DNS 同步`。
+   * Mock 环境通常需要 **15~30s+**，真实大模型加载权重与 CUDA Graph 更是 **1~5 分钟**。因此：**毫秒/秒级突发尖峰必须靠 Gateway 准入控制 + 有界队列 + 429/503 兜底保护在途请求，Autoscaling 解决的是持续时间长于冷启动窗口的负载波峰**。
+2. **过冲（Overshoot）与震荡抖动（Thrashing / Flapping）**：
+   * 冷启动期间新 Pod 尚未 Ready，排队继续攀升 → HPA 以为“扩得还不够”连续加码直至打满 `maxReplicaCount`（**过冲**）；新副本集体就绪瞬间清空队列 → 指标跌零触发缩容 → 下一波流量一来再次爆队（**抖动**）。
+   * 破局靠三件套：**PromQL 时间窗口平滑 + HPA `scaleUp` 限速防冷启动过冲 + `scaleDown.stabilizationWindowSeconds` 长稳定窗慢缩**。
+3. **激进缩容伤害 Prefix Cache 与在途 SSE 长流**：
+   * 频繁销毁副本会直接清空已预热的热门 KV Cache（削弱集群有效 KV 容量），且每次缩容都必须依赖 Step 5 的 **两阶段 `preStop` + 原生 `SIGTERM` Graceful Drain**，防止直接掐断正在生成的 SSE 流。
+4. **验证边界声明**：
+   * 本地 `kind` + Mock Replica 的 Step 6 压测验证的是 **Prometheus → KEDA → HPA → Deployment → Gateway DNS 这一控制面的弹性闭环、冷启动滞后、防抖策略与 `fallback` 降级**，不代表真实多 GPU 集群的推理吞吐线性伸缩收益。
+
 
 
 
