@@ -18,6 +18,7 @@
 - [Q10: 为什么 Prometheus 延迟指标不能用 Gauge 平均值而必须用 Histogram（秒）？为什么提升吞吐（Tokens/s）反而可能恶化尾延迟甚至让 Goodput 归零？](#q10-为什么-prometheus-延迟指标不能用-gauge-平均值而必须用-histogram秒为什么提升吞吐tokenss反而可能恶化尾延迟甚至让-goodput-归零)
 - [Q11: 在 Kubernetes 上部署大模型服务时，Startup / Readiness / Liveness 三大探针有什么本质区别？为什么绝不能把“满载高延迟”当成死锁触发 Liveness 重启？](#q11-在-kubernetes-上部署大模型服务时startup--readiness--liveness-三大探针有什么本质区别为什么绝不能把满载高延迟当成死锁触发-liveness-重启)
 - [Q12: 为什么大模型自动扩缩容要采用 Queue-Driven Autoscaling（KEDA + Prometheus + HPA）？为什么扩容无法立刻消除排队、扩太快会抖动，且必须区分 Gateway 队列与 Engine 队列？](#q12-为什么大模型自动扩缩容要采用-queue-driven-autoscalingkeda--prometheus--hpa为什么扩容无法立刻消除排队扩太快会抖动且必须区分-gateway-队列与-engine-队列)
+- [Q13: 【全链路实战复盘】单租户突发 100 条共享长 System Prompt 请求、20 条取消且 1 台 Replica 失联时，全系统如何流转、止损、扩容并证明优于 Baseline？](#q13-全链路实战复盘单租户突发-100-条共享长-system-prompt-请求20-条取消且-1-台-replica-失联时全系统如何流转止损扩容并证明优于-baseline)
 
 ---
 
@@ -657,6 +658,105 @@ Gateway 队列必须独立于 vLLM `waiting` / `running` 队列的 **四大核�
    * 频繁销毁副本会直接清空已预热的热门 KV Cache（削弱集群有效 KV 容量），且每次缩容都必须依赖 Step 5 的 **两阶段 `preStop` + 原生 `SIGTERM` Graceful Drain**，防止直接掐断正在生成的 SSE 流。
 4. **验证边界声明**：
    * 本地 `kind` + Mock Replica 的 Step 6 压测验证的是 **Prometheus → KEDA → HPA → Deployment → Gateway DNS 这一控制面的弹性闭环、冷启动滞后、防抖策略与 `fallback` 降级**，不代表真实多 GPU 集群的推理吞吐线性伸缩收益。
+
+---
+
+### Q13: 【全链路实战复盘】单租户突发 100 条共享长 System Prompt 请求、20 条取消且 1 台 Replica 失联时，全系统如何流转、止损、扩容并证明优于 Baseline？
+
+#### ❓ 问题背景与演练前提
+这道综合实战题把 **M1（网关/准入）→ M2（多副本路由/缓存权衡）→ Step 4（指标证据链）→ Step 5（K8s 生命周期与故障恢复）→ Step 6（KEDA 队列驱动自动扩缩容）** 完整串为一条端到端闭环：
+> **初始设定**：集群运行 `3` 台后端 Replica（`Replica-0/1/2`，单副本 `per_replica_max_inflight = 2` → Gateway 动态并发上限 `effective_max_inflight = 6`，有界队列 `queue_capacity = 16`；单租户配额 `tenant_max_concurrency = 30` 或突发桶 `burst = 25`）。  
+> **叠加场景**：`tenant-A` 瞬间突发 **100 条**共享长 System Prompt 的 SSE 流式请求，途中 **20 条**被客户端取消，同时 **`Replica-1` 失联**。
+
+---
+
+#### 一、Client 入口 → 准入控制：谁吃 `429` / `503`？谁放行？谁排队？
+
+对应 `gateway/app.py` 与 `gateway/admission.py`。请求抵达先注入/透传 `gateway_request_id`（`X-Request-ID`）与 W3C `traceparent`，通过格式校验（非法返回 `400`）与前置 `deadline` 检查（过期返回 `504`）后，按 4 层关卡分流：
+
+1. **租户级限流与配额 → 超额吃 `429 Too Many Requests`（带 `Retry-After`）**：
+   * 先检查 Per-Tenant **Token Bucket**（`tenant_rate_limit_rps` / `tenant_burst_capacity`）和 **单租户并发配额**（`tenant_max_concurrency`）。
+   * 若配置单租户配额为 `30`，突发 100 条中的后 **70 条**在**进队列前**即被 `429` 拦截（`gateway_rejections_total{reason="rate_limit_429"|"quota_429"}`），把吵闹邻居（Noisy Neighbor）挡在公共队列外，保护其他正常租户。
+2. **Work-Conserving Fast Path → 立即进入 `in_flight`**：
+   * 前 **`6` 条**（满足 `in_flight < effective_max_inflight` 且 `queued_count == 0`）零排队直接拿到槽位进入路由。
+3. **饱和进入有界队列（Bounded Queue）→ 排队等待**：
+   * 第 **`7 ~ 22` 条**（共 `queue_capacity = 16` 条）进入按 `(priority, tenant_id)` 组织的有界队列；不同优先级间按 `HIGH > NORMAL > LOW` + **Consecutive Cap + Aging 老化**防饥饿，同优先级内按 **Per-Tenant Round-Robin** 公平轮转出队。
+4. **队列打满或等待超时 → 吃 `503 Service Unavailable`（系统过载反压）**：
+   * 超出 `in_flight + queue_capacity` 的请求（未触发 429 时，第 **`23` 条起**）直接快速返回 **`503 server_overloaded_queue_full`**（`gateway_rejections_total{reason="queue_full_503"}`），拒绝无界排队拖垮在途请求；
+   * 已入队请求若等待超过 `queue_timeout` 则移出队列返回 **`503 queue_timeout_exceeded`**（端到端 `deadline` 到期则返回 **`504 deadline_exceeded`**）。
+* **边界区分**：`429` = **该租户超配额/超速率**；`503` = **系统容量+有界队列整体过载**。
+
+---
+
+#### 二、Router 选实例：共享长 System Prompt 下，Cache 与 Load 如何权衡？
+
+对应 `gateway/router.py`（`Filter → Score → Pick`）与 `gateway/registry.py`：
+
+1. **Filter（硬过滤）**：`HealthFilter` 过滤 `healthy=False` 或熔断器 `circuit_open` 的实例；`CapacityFilter` 过滤 `kv_cache_usage_perc >= 95%` 或饱和过载的实例。
+2. **共享前缀指纹（网关侧估计亲和度）**：对共享长 System Prompt 按 16 pseudo-tokens 切块做链式哈希（`compute_prefix_block_hashes`），查询有界 LRU 索引 `EstimatedPrefixCacheIndex` 得到 `estimated_prefix_affinity`（明确为**估计亲和度**，真实命中率独立抓取 vLLM `/metrics` 校验）。
+3. **Score & Pick（热点倾斜下的 `cache+load-aware` 破局）**：
+   * 第 1 条冷请求落至最闲机器（如 `Replica-0`）完成热身；
+   * 若用纯 **`prefix-aware`**：后续共享同前缀的突发请求会 100% 死磕 `Replica-0`，把它压爆排队而其余副本空转（M2 场景 3 实测 Queue/TTFT P99 恶化至 `109ms`）；
+   * 若用纯 **`least-load`**：机械均匀撒给所有机器，反复冷算长 Prefill（M2 场景 1 实测 Prefix Hit 仅 `16.67%`）；
+   * **`cache+load-aware`**：联合打分 $w_{\text{prefix}} \cdot S_{\text{prefix}} + w_{\text{load}} \cdot S_{\text{load}}$，**一旦热机 `Replica-0` 负载超过 `hotspot_load_threshold (0.75)` 或 KV 占满至 `kv_hotspot_threshold (0.85)`，对其前缀亲和度施加 Hotspot Damping（热点衰减），主动把超额并发溢出至空闲的 `Replica-2`**——既止损单机排队，又顺势将热前缀复制到第二台副本实现水平扩容（M2 场景 3 实测 P99 降 **`56.9%`**）。
+
+---
+
+#### 三、20 条被取消的请求：Stream 取消如何传播并保证零泄漏？
+
+对应 `gateway/app.py` 的三态机（`NOT_STARTED → STREAMING → FINISHED`）与 `gateway/admission.py`：
+
+1. **排队阶段取消（Queued）**：`acquire_slot` 轮询 `request.is_disconnected()` 并捕获 `asyncio.CancelledError` → 立刻 `_remove_queued_entry()` 踢出队列、扣减 `queued_count` 和 `tenant_active`（记录 `gateway_cancel_total{stage="in_queue"}`），**绝不把已取消请求派给 GPU 算白工**；若取消瞬间刚好被授予了槽位（`entry.granted == True`），立刻调用 `release_slot()` 移交给下一条活着的等待请求。
+2. **流式吐字阶段取消（In-Flight SSE）**：进入 `STREAMING` 后响应头已发出，Gateway 在逐 chunk 转发循环内监听断连/取消 → 在 `finally:` 块中**立即执行 `upstream_resp.aclose()` 关闭上游连接** → 后端 vLLM 检测到断连后中止自回归 Decode 并**释放 GPU KV Cache Blocks** → Gateway 幂等释放 `registry.release_replica()` 与 `admission.release_slot()`（记录 `gateway_cancel_total{stage="in_flight"}`），槽位零泄漏并瞬间唤醒队列中的下一条请求。
+
+---
+
+#### 四、`Replica-1` 同时失联：故障如何检测、摘除与自愈？
+
+采用 **数据面毫秒级止血 + 控制面秒级摘除与自愈** 双层防线：
+
+1. **失联副本上既有请求的显式失败语义**：
+   * **首字前断连（`NOT_STARTED`）**：受 `connect_timeout` / `read_timeout` 约束，返回明确 JSON `502` / `504` 并释放槽位；
+   * **首字后断连（`STREAMING`）**：响应头已发无法改状态码，发送显式 SSE `mid_stream_error` 事件帧后干净关闭流并释放槽位。
+2. **第一道防线（数据面毫秒级 — Circuit Breaker）**：`Replica-1` 连续失败达 `circuit_breaker_failure_threshold (2)` 后，熔断器立刻 Open，`HealthFilter` **毫秒级**将其踢出路由池，无需等待 K8s 探针慢拍。
+3. **第二道防线（控制面秒级 — K8s Endpoints + Headless DNS + Deployment）**：
+   * K8s 控制面亚秒级将死亡 Pod IP 移出 `mock-vllm-headless` Endpoints（Step 5 Drill 1 实测 **`0.67s`**）；若为不就绪故障，`readinessProbe` (`/readyz`) **只摘流、绝不重启容器**（`livenessProbe` 严禁绑定推理负载延迟）；
+   * Gateway `HeadlessDNSReplicaDiscoverer` 每 `1s` 同步 DNS，发现 `Replica-1` 消失 → 立刻 `set_health(False)` 停派新请求 → 待其在途 `inflight == 0` 后 `unregister` 并**清除其在 `EstimatedPrefixCacheIndex` 的脏前缀记录**，同时动态下调 `effective_max_inflight`（`6 → 4`）；
+   * Deployment 自动拉起替代 Pod，通过 `startupProbe`（屏蔽冷启动防误杀）与 `readinessProbe` 上线后，Gateway 自动重新注册并恢复并发槽位（Step 5 Drill 1 实测 **`6.56s`** 全量恢复）。
+
+---
+
+#### 五、哪项指标触发扩容？如何防止过冲与抖动？
+
+对应 `k8s/keda-scaledobject.yaml` 与 `docs/keda_autoscaling_report.md`：
+
+* **触发指标**：**`gateway_queue_depth`**（明确归属 **Gateway 准入排队队列**，而非后端 vLLM Engine Scheduler 队列）。
+* **控制闭环**：`Gateway (/metrics)` → `Prometheus (2s scrape)` → `KEDA ScaledObject (5s polling)` 执行滑动峰值窗口查询 **`max_over_time(gateway_queue_depth[30s])`**（`AverageValue`, `threshold: "2"`）→ `HPA` 按 $\lceil \text{metricValue} / 2 \rceil$ 扩容 `Deployment/mock-vllm`（`1 ↔ 4`）→ 新 Pod 就绪进入 Headless DNS → Gateway 动态放大 `effective_max_inflight` 并**立即唤醒队列等待请求**。
+* **必须说清的 3 条风险边界**：
+  1. **扩容不能立刻消除初始排队**（控制滞后 = Prometheus 抓取 + KEDA 轮询 + HPA 15s 同步 + Pod 冷启动 + DNS 发现），初期尖峰必须由入口 `429/503` 准入控制兜底；
+  2. **防过冲与防抖**：`scaleUp.policies (+2 Pods / 15s)` 限制冷启动过冲；`scaleDown.stabilizationWindowSeconds: 45` + `-1 Pod / 15s` 防止队列刚排空就反复缩容震荡（同时保护预热的 Prefix KV Cache，缩容依赖两阶段 `preStop` + Uvicorn `SIGTERM` 保护在途 SSE）；
+  3. **监控断连保护**：Prometheus 不可达连续达 `failureThreshold: 2` 时，KEDA 激活 `fallback.replicas: 2` 保底运行，避免误判 0 负载缩死服务。
+
+---
+
+#### 六、如何用相同 Workload 科学证明最终方案优于 Baseline？
+
+对应 Step 4 & Step 6 的 **控制变量对照 + 六维证据链 + 自动化回归门禁**（`docs/slo_benchmark_regression_report.md`、`scripts/check_regression.py`）：
+
+1. **严格锁定控制变量**：
+   * 固定到达分布、100 条请求的输入/输出长度分布、共享长前缀比例、20 条取消的精确触发时机、`Replica-1` 故障注入时刻、相同 `--seed 42`、相同模型版本与精度；每轮实验加唯一 `--prompt-salt` 与后端 Counter 差值采样，杜绝跨次 Prefix Cache 残留污染。
+   * **分层验证边界**：多副本路由/故障/KEDA 控制面弹性用 Mock Replicas 验证（**不把 Mock RPS 当真实多 GPU 吞吐**）；真实 KV 命中率、TTFT/TPOT/ITL、显存占用与 Goodput 在单卡 RTX 5080 真实 vLLM 上做物理校验。
+2. **Baseline vs 最终方案（6 维多指标裁决，绝不只看 `Tokens/s` 或均值）**：
+   * **Baseline**：无租户隔离/无界排队 + `least-load`/`random` + 无熔断无动态容量 + 固定副本；
+   * **最终方案**：有界队列 + `429/503` 隔离反压 + `cache+load-aware` 热点衰减 + 熔断/Headless DNS 自愈 + KEDA 弹性扩容。
+   * **核心证明维度**：
+     1. **Histogram 延迟分位**：`queue_wait P99`、`TTFT P50/P99`、`TPOT/ITL P99`、`E2E P50/P99`，并拆分初期滞后窗 vs 扩容稳态窗（Step 6 实测稳态窗 TTFT P99 `-75.7%`、E2E P99 `-67.1%`）；
+     2. **SLO 有效吞吐（Goodput）**：满足全部延迟 SLA 的请求占比与有效 RPS，揭穿“拉爆尾延迟换来的虚假高吞吐”；
+     3. **拒绝结构与取消零泄漏**：明确区分 `429`（隔离吵闹邻居）与 `503`（稳态窗实测从 `55.17% → 0.00%`），断言 20 条取消后 `in_flight == 0`、`queued_count == 0`；
+     4. **Prefix Cache 双口径校验**：网关 `estimated_prefix_affinity` 与真实 vLLM `vllm:prefix_cache_hits_total / queries_total` 交叉印证；
+     5. **故障与弹性时间线日志**：落盘 `Endpoints` 摘除/恢复时间、`kubectl get hpa/scaledobject` 状态及稳定窗零抖动证明；
+     6. **Trace 归因 + 回归门禁**：通过 `gateway_request_id` ↔ `backend_request_id` 定位残余长尾，并运行 `scripts/check_regression.py` 自动化门禁校验全部核心 SLA 零退化（`PASS`, exit code `0`）。
+
 
 
 
